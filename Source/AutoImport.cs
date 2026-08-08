@@ -1,4 +1,3 @@
-```csharp
 using Playnite.SDK;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
@@ -604,4 +603,3 @@ namespace AutoImportPlugin
         }
     }
 }
-```
