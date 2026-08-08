@@ -3,6 +3,7 @@ using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -15,6 +16,9 @@ namespace AutoImportPlugin
         private static readonly ILogger logger = LogManager.GetLogger();
         private AutoImportSettingsViewModel settings { get; set; }
 
+        private Process launcherProcess;
+        private System.Threading.Timer launcherCheckTimer;
+
         public override Guid Id { get; } = Guid.Parse("92c96e54-069b-4fc4-bbaa-35ac3064f85a");
         public override string Name => "AutoImport";
 
@@ -22,6 +26,13 @@ namespace AutoImportPlugin
         {
             settings = new AutoImportSettingsViewModel(this);
             Properties = new LibraryPluginProperties { HasSettings = true };
+
+            launcherCheckTimer = new System.Threading.Timer(
+                CheckLauncherProcess,
+                null,
+                0,
+                1000
+            );
         }
 
         public override ISettings GetSettings(bool firstRunSettings) => settings;
@@ -30,6 +41,60 @@ namespace AutoImportPlugin
         public override IEnumerable<GameMetadata> GetGames(LibraryGetGamesArgs args)
         {
             return ScanAndSelectGames();
+        }
+
+        private void CheckLauncherProcess(object state)
+        {
+            try
+            {
+                // Si on surveille déjà un processus, vérifier s'il est toujours en vie
+                if (launcherProcess != null)
+                {
+                    if (!launcherProcess.HasExited)
+                        return;
+
+                    launcherProcess.Dispose();
+                    launcherProcess = null;
+
+                    // Le launcher vient de se fermer : déclencher le scan
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        ScanAndSelectGames();
+                    }));
+
+                    return;
+                }
+
+                // Chercher le launcher
+                var processes = Process.GetProcessesByName("Project GLD");
+
+                if (processes.Length > 0)
+                {
+                    launcherProcess = processes[0];
+                    launcherProcess.EnableRaisingEvents = false;
+                }
+
+                foreach (var process in processes.Skip(1))
+                {
+                    process.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.Warn(ex, "Failed to monitor launcher process");
+            }
+        }
+
+        ~AutoImport()
+        {
+            try
+            {
+                launcherCheckTimer?.Dispose();
+                launcherProcess?.Dispose();
+            }
+            catch
+            {
+            }
         }
 
         private HashSet<string> BuildExistingGamesSet()
@@ -104,11 +169,14 @@ namespace AutoImportPlugin
             Application.Current.Dispatcher.Invoke(() =>
             {
                 var window = new GameSelectionWindow(allFoundGames);
-                if (Application.Current.MainWindow != null) window.Owner = Application.Current.MainWindow;
+                if (Application.Current.MainWindow != null)
+                    window.Owner = Application.Current.MainWindow;
 
                 if (window.ShowDialog() == true)
                 {
-                    finalSelection = window.SelectedGames.Select(game => game.GameData).ToList();
+                    finalSelection = window.SelectedGames
+                        .Select(game => game.GameData)
+                        .ToList();
 
                     var newlyIgnored = allFoundGames
                         .Where(game => game.IsIgnored)
@@ -124,6 +192,7 @@ namespace AutoImportPlugin
                                 settings.BlockedPathsUI.Add(path);
                             }
                         }
+
                         settings.EndEdit();
                     }
                 }
@@ -132,48 +201,72 @@ namespace AutoImportPlugin
             return finalSelection;
         }
 
-        private IEnumerable<ScannedGameWrapper> ScanFolderLimited(string rootPath, HashSet<string> blockedSet, HashSet<string> existingSet)
+        private IEnumerable<ScannedGameWrapper> ScanFolderLimited(
+            string rootPath,
+            HashSet<string> blockedSet,
+            HashSet<string> existingSet)
         {
             var results = new List<ScannedGameWrapper>();
+
             results.AddRange(GetExecutablesInDir(rootPath, blockedSet, existingSet));
 
             try
             {
                 foreach (var subDir in Directory.GetDirectories(rootPath))
                 {
-                    results.AddRange(ScanFolderLimited(subDir, blockedSet, existingSet));
+                    results.AddRange(
+                        ScanFolderLimited(subDir, blockedSet, existingSet)
+                    );
                 }
-            }        
+            }
             catch (Exception ex)
             {
-                logger.Warn(ex, $"Failed to scan subdirectories in: {rootPath}");
+                logger.Warn(
+                    ex,
+                    $"Failed to scan subdirectories in: {rootPath}"
+                );
             }
+
             return results;
         }
 
-        private IEnumerable<ScannedGameWrapper> GetExecutablesInDir(string dirPath, HashSet<string> blockedSet, HashSet<string> existingSet)
+        private IEnumerable<ScannedGameWrapper> GetExecutablesInDir(
+            string dirPath,
+            HashSet<string> blockedSet,
+            HashSet<string> existingSet)
         {
             var list = new List<ScannedGameWrapper>();
+
             try
             {
                 var files = Directory.GetFiles(dirPath, "*.exe");
+
                 foreach (var file in files)
                 {
                     string normalizedFile = NormalizePath(file);
                     string normalizedDir = NormalizePath(dirPath);
 
-                    bool isIgnored = blockedSet.Contains(normalizedFile) || blockedSet.Contains(normalizedDir);
-                    if (isIgnored) continue;
+                    bool isIgnored =
+                        blockedSet.Contains(normalizedFile) ||
+                        blockedSet.Contains(normalizedDir);
 
-                    bool alreadyExists = existingSet.Contains(normalizedFile) || existingSet.Contains(normalizedDir);
-                    if (alreadyExists) continue;
+                    if (isIgnored)
+                        continue;
 
+                    bool alreadyExists =
+                        existingSet.Contains(normalizedFile) ||
+                        existingSet.Contains(normalizedDir);
 
+                    if (alreadyExists)
+                        continue;
 
                     if (IsGameExecutable(file))
                     {
                         var fileInfo = new FileInfo(file);
-                        string gameName = GetGameNameFromFolderOrExe(dirPath, fileInfo);
+                        string gameName = GetGameNameFromFolderOrExe(
+                            dirPath,
+                            fileInfo
+                        );
 
                         var metadata = new GameMetadata
                         {
@@ -181,7 +274,10 @@ namespace AutoImportPlugin
                             GameId = fileInfo.FullName,
                             InstallDirectory = fileInfo.DirectoryName,
                             IsInstalled = true,
-                            Platforms = new HashSet<MetadataProperty> { new MetadataSpecProperty("pc_windows") },
+                            Platforms = new HashSet<MetadataProperty>
+                            {
+                                new MetadataSpecProperty("pc_windows")
+                            },
                             Source = new MetadataNameProperty("AutoImport"),
                             GameActions = new List<GameAction>
                             {
@@ -195,65 +291,125 @@ namespace AutoImportPlugin
                                 }
                             }
                         };
-                        list.Add(new ScannedGameWrapper { GameData = metadata });
+
+                        list.Add(
+                            new ScannedGameWrapper
+                            {
+                                GameData = metadata
+                            }
+                        );
                     }
                 }
             }
             catch (Exception ex)
             {
-                logger.Warn(ex, $"Failed to scan directory for executables: {dirPath}");
+                logger.Warn(
+                    ex,
+                    $"Failed to scan directory for executables: {dirPath}"
+                );
             }
+
             return list;
         }
 
-        private string GetGameNameFromFolderOrExe(string dirPath, FileInfo fileInfo)
+        private string GetGameNameFromFolderOrExe(
+            string dirPath,
+            FileInfo fileInfo)
         {
             string folderName = Path.GetFileName(dirPath);
+
             if (!string.IsNullOrWhiteSpace(folderName))
             {
                 string cleanFolderName = CleanGameName(folderName);
+
                 if (IsValidGameName(cleanFolderName))
                 {
                     return cleanFolderName;
                 }
             }
 
-            string rawExeName = Path.GetFileNameWithoutExtension(fileInfo.Name);
+            string rawExeName =
+                Path.GetFileNameWithoutExtension(fileInfo.Name);
+
             return CleanGameName(rawExeName);
         }
 
         private bool IsValidGameName(string name)
         {
-            if (string.IsNullOrWhiteSpace(name)) return false;
-            
-            if (name.Length < 2) return false;
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            if (name.Length < 2)
+                return false;
 
             string lowerName = name.ToLowerInvariant();
-            string[] genericNames = { "bin", "game", "games", "exe", "exes", "program", "programs", 
-                                     "application", "applications", "software", "tools", "util", 
-                                     "utils", "temp", "tmp", "download", "downloads" };
-            
+
+            string[] genericNames =
+            {
+                "bin",
+                "game",
+                "games",
+                "exe",
+                "exes",
+                "program",
+                "programs",
+                "application",
+                "applications",
+                "software",
+                "tools",
+                "util",
+                "utils",
+                "temp",
+                "tmp",
+                "download",
+                "downloads"
+            };
+
             return !genericNames.Contains(lowerName);
         }
 
         private string CleanGameName(string filename)
         {
-            if (string.IsNullOrWhiteSpace(filename)) return filename;
+            if (string.IsNullOrWhiteSpace(filename))
+                return filename;
 
-            string clean = filename.Replace('.', ' ').Replace('_', ' ');
+            string clean =
+                filename.Replace('.', ' ').Replace('_', ' ');
 
-            clean = Regex.Replace(clean, @"\[.*?\]|\(.*?\)", "");
+            clean = Regex.Replace(
+                clean,
+                @"\[.*?\]|\(.*?\)",
+                ""
+            );
 
-            string junkPattern = @"\bv?(\d+(\.\d+)+)\b|repack|goty|edition|remastered|x64|x86|build|setup|installer";
-            clean = Regex.Replace(clean, junkPattern, "", RegexOptions.IgnoreCase);
+            string junkPattern =
+                @"\bv?(\d+(\.\d+)+)\b|repack|goty|edition|remastered|x64|x86|build|setup|installer";
 
-            return Regex.Replace(clean, @"\s+", " ").Trim();
+            clean = Regex.Replace(
+                clean,
+                junkPattern,
+                "",
+                RegexOptions.IgnoreCase
+            );
+
+            return Regex.Replace(
+                clean,
+                @"\s+",
+                " "
+            ).Trim();
         }
 
         private bool IsGameExecutable(string path)
         {
-            string fileName = Path.GetFileName(path).ToLower();
-            return !(fileName.Contains("uninstall") || fileName.Contains("setup") || fileName.Contains("config") || fileName.Contains("crash"));
+            string fileName =
+                Path.GetFileName(path).ToLower();
+
+            return !(
+                fileName.Contains("uninstall") ||
+                fileName.Contains("setup") ||
+                fileName.Contains("config") ||
+                fileName.Contains("crash")
+            );
         }
     }
 }
