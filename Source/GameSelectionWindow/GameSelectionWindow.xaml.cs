@@ -1,3 +1,4 @@
+```csharp
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -12,13 +13,24 @@ namespace AutoImportPlugin
         {
             get
             {
-                return _games.Where(game => game.IsSelected).ToList();
+                return _games
+                    .Where(game => game.IsSelected)
+                    .ToList();
+            }
+        }
+
+        public bool EnableHdrSupport
+        {
+            get
+            {
+                return ChkEnableHdr.IsChecked == true;
             }
         }
 
         public GameSelectionWindow(List<ScannedGameWrapper> foundGames)
         {
             InitializeComponent();
+
             _games = foundGames;
 
             GridGames.ItemsSource = _games;
@@ -37,3 +49,4 @@ namespace AutoImportPlugin
         }
     }
 }
+```
