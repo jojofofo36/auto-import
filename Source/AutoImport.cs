@@ -1,4 +1,4 @@
-﻿using Playnite.SDK;
+using Playnite.SDK;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using System;
@@ -142,6 +142,19 @@ namespace AutoImportPlugin
                 foreach (var subDir in Directory.GetDirectories(rootPath))
                 {
                     results.AddRange(GetExecutablesInDir(subDir, blockedSet, existingSet));
+
+                    // Niveau 2 : sous-dossiers des sous-dossiers
+                    try
+                    {
+                        foreach (var subSubDir in Directory.GetDirectories(subDir))
+                        {
+                            results.AddRange(GetExecutablesInDir(subSubDir, blockedSet, existingSet));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Warn(ex, $"Failed to scan sub-subdirectories in: {subDir}");
+                    }
                 }
             }
             catch (Exception ex)
