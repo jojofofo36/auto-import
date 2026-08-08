@@ -141,22 +141,8 @@ namespace AutoImportPlugin
             {
                 foreach (var subDir in Directory.GetDirectories(rootPath))
                 {
-                    results.AddRange(GetExecutablesInDir(subDir, blockedSet, existingSet));
-
-                    // Niveau 2 : sous-dossiers des sous-dossiers
-                    try
-                    {
-                        foreach (var subSubDir in Directory.GetDirectories(subDir))
-                        {
-                            results.AddRange(GetExecutablesInDir(subSubDir, blockedSet, existingSet));
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.Warn(ex, $"Failed to scan sub-subdirectories in: {subDir}");
-                    }
-                }
-            }
+                    results.AddRange(ScanFolderLimited(subDir, blockedSet, existingSet));
+                    
             catch (Exception ex)
             {
                 logger.Warn(ex, $"Failed to scan subdirectories in: {rootPath}");
