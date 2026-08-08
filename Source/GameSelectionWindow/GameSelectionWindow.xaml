@@ -1,4 +1,3 @@
-```xml
 <Window.Resources>
 
     <Style TargetType="CheckBox">
@@ -136,4 +135,3 @@
     </Grid>
 
 </Grid>
-```
