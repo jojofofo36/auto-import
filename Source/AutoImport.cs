@@ -142,7 +142,8 @@ namespace AutoImportPlugin
                 foreach (var subDir in Directory.GetDirectories(rootPath))
                 {
                     results.AddRange(ScanFolderLimited(subDir, blockedSet, existingSet));
-                    
+                }
+            }        
             catch (Exception ex)
             {
                 logger.Warn(ex, $"Failed to scan subdirectories in: {rootPath}");
