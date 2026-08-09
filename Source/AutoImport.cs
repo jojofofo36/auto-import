@@ -167,10 +167,6 @@ namespace AutoImportPlugin
                             $"Enabled system HDR for imported game: {game.Name}"
                         );
 
-                        // Important :
-                        // on efface immédiatement la demande HDR afin
-                        // d'éviter de refaire Update() à chaque
-                        // OnLibraryUpdated().
                         pendingHdrExecutablePath = null;
 
                         break;
@@ -223,8 +219,6 @@ namespace AutoImportPlugin
                             );
 
                         // Le lien n'est pas encore arrivé.
-                        // On conserve pendingMetadataExecutablePath
-                        // pour vérifier lors du prochain update.
                         if (pcGamingWikiLink == null)
                         {
                             logger.Info(
@@ -272,7 +266,6 @@ namespace AutoImportPlugin
                             );
                         }
 
-                        // Le jeu a été traité.
                         pendingMetadataExecutablePath = null;
 
                         break;
@@ -677,9 +670,8 @@ namespace AutoImportPlugin
                             new FileInfo(file);
 
                         string gameName =
-                            GetGameNameFromFolderOrExe(
-                                dirPath,
-                                fileInfo
+                            GetGameNameFromFolder(
+                                dirPath
                             );
 
                         var metadata =
@@ -756,34 +748,33 @@ namespace AutoImportPlugin
         // GAME NAME
         // ============================================================
 
-        private string GetGameNameFromFolderOrExe(
-            string dirPath,
-            FileInfo fileInfo)
+        private string GetGameNameFromFolder(
+            string dirPath)
         {
             string folderName =
-                Path.GetFileName(dirPath);
-
-            if (!string.IsNullOrWhiteSpace(
-                folderName))
-            {
-                string cleanFolderName =
-                    CleanGameName(folderName);
-
-                if (IsValidGameName(
-                    cleanFolderName))
-                {
-                    return cleanFolderName;
-                }
-            }
-
-            string rawExeName =
-                Path.GetFileNameWithoutExtension(
-                    fileInfo.Name
+                Path.GetFileName(
+                    dirPath.TrimEnd(
+                        Path.DirectorySeparatorChar,
+                        Path.AltDirectorySeparatorChar
+                    )
                 );
 
-            return CleanGameName(
-                rawExeName
-            );
+            if (string.IsNullOrWhiteSpace(folderName))
+            {
+                return "Unknown Game";
+            }
+
+            string cleanFolderName =
+                CleanGameName(folderName);
+
+            if (!string.IsNullOrWhiteSpace(cleanFolderName))
+            {
+                return cleanFolderName;
+            }
+
+            // Aucun fallback vers le nom de l'EXE.
+            // On garde au minimum le nom original du dossier.
+            return folderName.Trim();
         }
 
         // ============================================================
@@ -841,32 +832,196 @@ namespace AutoImportPlugin
                 return filename;
             }
 
-            string clean =
-                filename
-                    .Replace('.', ' ')
-                    .Replace('_', ' ');
+            string clean = filename.Trim();
 
+            // Remplace les séparateurs courants par des espaces.
+            clean = clean
+                .Replace('.', ' ')
+                .Replace('_', ' ');
+
+            // Supprime les informations entre crochets / parenthèses.
             clean = Regex.Replace(
                 clean,
                 @"\[.*?\]|\(.*?\)",
-                ""
+                " ",
+                RegexOptions.IgnoreCase
             );
 
+            // Versions et informations techniques inutiles.
             string junkPattern =
-                @"\bv?(\d+(\.\d+)+)\b|repack|goty|edition|remastered|x64|x86|build|setup|installer";
+                @"\bv?\d+(\.\d+)+\b" +
+                @"|\brepack\b" +
+                @"|\bgoty\b" +
+                @"|\bx64\b" +
+                @"|\bx86\b" +
+                @"|\bbuild\b" +
+                @"|\bsetup\b" +
+                @"|\binstaller\b";
 
             clean = Regex.Replace(
                 clean,
                 junkPattern,
-                "",
+                " ",
                 RegexOptions.IgnoreCase
             );
 
-            return Regex.Replace(
+            // Normalisation des différentes écritures courantes.
+            clean = Regex.Replace(
+                clean,
+                @"\bdirectors\s+cut\b",
+                "Director's Cut",
+                RegexOptions.IgnoreCase
+            );
+
+            clean = Regex.Replace(
+                clean,
+                @"\bdirector\s+cut\b",
+                "Director's Cut",
+                RegexOptions.IgnoreCase
+            );
+
+            clean = Regex.Replace(
+                clean,
+                @"\bgame\s+of\s+the\s+year\b",
+                "Game of the Year",
+                RegexOptions.IgnoreCase
+            );
+
+            clean = Regex.Replace(
+                clean,
+                @"\bdefinitive\s+edition\b",
+                "Definitive Edition",
+                RegexOptions.IgnoreCase
+            );
+
+            clean = Regex.Replace(
+                clean,
+                @"\bcomplete\s+edition\b",
+                "Complete Edition",
+                RegexOptions.IgnoreCase
+            );
+
+            clean = Regex.Replace(
+                clean,
+                @"\bultimate\s+edition\b",
+                "Ultimate Edition",
+                RegexOptions.IgnoreCase
+            );
+
+            clean = Regex.Replace(
+                clean,
+                @"\bgoty\b",
+                "Game of the Year",
+                RegexOptions.IgnoreCase
+            );
+
+            // Nettoyage des espaces.
+            clean = Regex.Replace(
                 clean,
                 @"\s+",
                 " "
             ).Trim();
+
+            if (string.IsNullOrWhiteSpace(clean))
+                return string.Empty;
+
+            // Capitalisation douce :
+            // on conserve les mots déjà contenant des majuscules
+            // internes et on normalise surtout les noms entièrement
+            // en majuscules provenant des dossiers.
+            if (clean == clean.ToUpperInvariant())
+            {
+                clean = ToTitleCasePreservingSpecialWords(
+                    clean.ToLowerInvariant()
+                );
+            }
+
+            return clean.Trim();
+        }
+
+        // ============================================================
+        // TITLE CASE
+        // ============================================================
+
+        private string ToTitleCasePreservingSpecialWords(
+            string text)
+        {
+            string[] words =
+                text.Split(
+                    new[] { ' ' },
+                    StringSplitOptions.RemoveEmptyEntries
+                );
+
+            for (int i = 0; i < words.Length; i++)
+            {
+                string word = words[i];
+
+                if (string.IsNullOrWhiteSpace(word))
+                    continue;
+
+                if (word.Contains("'"))
+                {
+                    string[] parts =
+                        word.Split(
+                            new[] { '\'' },
+                            StringSplitOptions.None
+                        );
+
+                    for (int j = 0; j < parts.Length; j++)
+                    {
+                        if (!string.IsNullOrEmpty(parts[j]))
+                        {
+                            parts[j] =
+                                char.ToUpper(
+                                    parts[j][0]
+                                ) +
+                                parts[j].Substring(1);
+                        }
+                    }
+
+                    words[i] =
+                        string.Join(
+                            "'",
+                            parts
+                        );
+                }
+                else
+                {
+                    words[i] =
+                        char.ToUpper(word[0]) +
+                        word.Substring(1);
+                }
+            }
+
+            string result =
+                string.Join(
+                    " ",
+                    words
+                );
+
+            // Réapplique les formes spéciales.
+            result = Regex.Replace(
+                result,
+                @"\bDirectors\s+Cut\b",
+                "Director's Cut",
+                RegexOptions.IgnoreCase
+            );
+
+            result = Regex.Replace(
+                result,
+                @"\bDirector\s+Cut\b",
+                "Director's Cut",
+                RegexOptions.IgnoreCase
+            );
+
+            result = Regex.Replace(
+                result,
+                @"\bGame\s+Of\s+The\s+Year\b",
+                "Game of the Year",
+                RegexOptions.IgnoreCase
+            );
+
+            return result;
         }
 
         // ============================================================
