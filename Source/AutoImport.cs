@@ -40,55 +40,29 @@ namespace AutoImportPlugin
             @"C:\Program Files (x86)\net8.0-windows7.0.Full\Auto Profiles.xml";
 
         // ============================================================
-        // PENDING IMPORT
+        // PENDING IMPORT DATA
         // ============================================================
 
-        private List<string> pendingPostImportExecutables =
-            new List<string>();
+        private string pendingExecutablePath;
+
+        private bool pendingHdrSupport;
 
         private string pendingController;
 
-        private bool pendingHdr;
-
-        private bool postImportActionsPending;
-
+        // Permet d'éviter de lancer plusieurs fois les opérations
+        // après plusieurs événements LibraryUpdated.
         private bool postImportActionsStarted;
 
-        private System.Threading.Timer postImportTimer;
-
-        private int metadataRetryCount;
-
-        private const int MaxMetadataRetries = 20;
-
-        // ============================================================
-        // PENDING HDR / METADATA
-        // ============================================================
-
-        private string pendingHdrExecutablePath;
-
-        private string pendingMetadataExecutablePath;
-
+        // Jeux pour lesquels le lien PCGamingWiki a déjà été ouvert.
         private readonly HashSet<Guid> openedPcGamingWikiGames =
             new HashSet<Guid>();
 
-        // ============================================================
-        // PLUGIN
-        // ============================================================
-
         public override Guid Id { get; } =
-            Guid.Parse(
-                "92c96e54-069b-4fc4-bbaa-35ac3064f85a"
-            );
+            Guid.Parse("92c96e54-069b-4fc4-bbaa-35ac3064f85a");
 
-        public override string Name =>
-            "AutoImport";
+        public override string Name => "AutoImport";
 
-        // ============================================================
-        // CONSTRUCTOR
-        // ============================================================
-
-        public AutoImport(IPlayniteAPI api)
-            : base(api)
+        public AutoImport(IPlayniteAPI api) : base(api)
         {
             settings =
                 new AutoImportSettingsViewModel(this);
@@ -108,42 +82,21 @@ namespace AutoImportPlugin
                 );
         }
 
-        // ============================================================
-        // SETTINGS
-        // ============================================================
-
         public override ISettings GetSettings(
             bool firstRunSettings)
         {
             return settings;
         }
 
-        public override System.Windows.Controls.UserControl
-            GetSettingsView(bool firstRunSettings)
+        public override System.Windows.Controls.UserControl GetSettingsView(
+            bool firstRunSettings)
         {
             return new AutoImportSettingsView();
         }
 
-        // ============================================================
-        // GET GAMES
-        // ============================================================
-
         public override IEnumerable<GameMetadata> GetGames(
             LibraryGetGamesArgs args)
         {
-            /*
-             * IMPORTANT :
-             *
-             * Cette méthode doit uniquement scanner et retourner
-             * les GameMetadata.
-             *
-             * Aucun restart DS4Windows.
-             * Aucun ReShade.
-             * Aucun Process.Start bloquant.
-             *
-             * Playnite doit pouvoir terminer son import normalement.
-             */
-
             return ScanAndSelectGames();
         }
 
@@ -210,298 +163,20 @@ namespace AutoImportPlugin
 
             try
             {
-                logger.Info(
-                    "Playnite library update completed."
-                );
-
-                /*
-                 * On ne lance PAS immédiatement les outils.
-                 *
-                 * On laisse Playnite finir son cycle interne
-                 * d'importation avant de toucher à DS4Windows,
-                 * ReShade ou aux métadonnées.
-                 */
-
-                if (postImportActionsPending &&
-                    !postImportActionsStarted)
+                if (string.IsNullOrWhiteSpace(
+                    pendingExecutablePath))
                 {
-                    logger.Info(
-                        "Pending post-import actions detected. Waiting before starting them..."
-                    );
-
-                    StartPostImportTimer();
+                    return;
                 }
-
-                /*
-                 * Si les actions ont déjà été lancées, on continue
-                 * simplement à surveiller l'arrivée du lien
-                 * PCGamingWiki.
-                 */
 
                 if (postImportActionsStarted)
                 {
-                    CheckPendingMetadata();
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.Error(
-                    ex,
-                    "Failed during library update processing"
-                );
-            }
-        }
-
-        // ============================================================
-        // POST IMPORT TIMER
-        // ============================================================
-
-        private void StartPostImportTimer()
-        {
-            try
-            {
-                if (postImportTimer != null)
-                    return;
-
-                /*
-                 * 2 secondes après OnLibraryUpdated.
-                 *
-                 * Cela évite de modifier/restart DS4Windows
-                 * pendant que Playnite termine encore son import.
-                 */
-
-                postImportTimer =
-                    new System.Threading.Timer(
-                        ExecutePostImportActions,
-                        null,
-                        2000,
-                        System.Threading.Timeout.Infinite
-                    );
-
-                logger.Info(
-                    "Post-import timer started. Actions will run in 2 seconds."
-                );
-            }
-            catch (Exception ex)
-            {
-                logger.Error(
-                    ex,
-                    "Failed to start post-import timer"
-                );
-            }
-        }
-
-        // ============================================================
-        // EXECUTE POST IMPORT ACTIONS
-        // ============================================================
-
-        private void ExecutePostImportActions(
-            object state)
-        {
-            try
-            {
-                Application.Current.Dispatcher.BeginInvoke(
-                    new Action(() =>
-                    {
-                        try
-                        {
-                            postImportActionsStarted = true;
-                            postImportActionsPending = false;
-
-                            postImportTimer?.Dispose();
-                            postImportTimer = null;
-
-                            logger.Info(
-                                "Starting post-import actions."
-                            );
-
-                            // ------------------------------------------------
-                            // HDR
-                            // ------------------------------------------------
-
-                            ApplyPendingHdr();
-
-                            // ------------------------------------------------
-                            // RESHADE
-                            // ------------------------------------------------
-
-                            if (pendingPostImportExecutables != null &&
-                                pendingPostImportExecutables.Count > 0)
-                            {
-                                string executable =
-                                    pendingPostImportExecutables[0];
-
-                                LaunchReShadeDeployer(
-                                    executable
-                                );
-                            }
-
-                            // ------------------------------------------------
-                            // DS4WINDOWS
-                            // ------------------------------------------------
-
-                            if (pendingPostImportExecutables != null &&
-                                pendingPostImportExecutables.Count > 0 &&
-                                !string.IsNullOrWhiteSpace(
-                                    pendingController))
-                            {
-                                var wrappers =
-                                    pendingPostImportExecutables
-                                        .Select(path =>
-                                        {
-                                            return new ScannedGameWrapper
-                                            {
-                                                GameData =
-                                                    new GameMetadata
-                                                    {
-                                                        GameActions =
-                                                            new List<GameAction>
-                                                            {
-                                                                new GameAction
-                                                                {
-                                                                    Type =
-                                                                        GameActionType.File,
-
-                                                                    Path =
-                                                                        path
-                                                                }
-                                                            }
-                                                    },
-
-                                                ExecutablePath =
-                                                    path
-                                            };
-                                        })
-                                        .ToList();
-
-                                UpdateDS4WindowsProfiles(
-                                    wrappers,
-                                    pendingController
-                                );
-                            }
-                            else
-                            {
-                                logger.Info(
-                                    "No controller action requested."
-                                );
-                            }
-
-                            // ------------------------------------------------
-                            // METADATA / PCGAMINGWIKI
-                            // ------------------------------------------------
-
-                            metadataRetryCount = 0;
-
-                            CheckPendingMetadata();
-
-                            logger.Info(
-                                "Post-import actions completed."
-                            );
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.Error(
-                                ex,
-                                "Failed during post-import actions."
-                            );
-                        }
-                    })
-                );
-            }
-            catch (Exception ex)
-            {
-                logger.Error(
-                    ex,
-                    "Failed to dispatch post-import actions."
-                );
-            }
-        }
-
-        // ============================================================
-        // APPLY HDR
-        // ============================================================
-
-        private void ApplyPendingHdr()
-        {
-            try
-            {
-                if (!pendingHdr)
-                    return;
-
-                if (string.IsNullOrWhiteSpace(
-                    pendingHdrExecutablePath))
-                {
                     return;
                 }
 
                 string targetPath =
                     NormalizePath(
-                        pendingHdrExecutablePath
-                    );
-
-                foreach (var game in
-                    PlayniteApi.Database.Games)
-                {
-                    if (game.GameActions == null)
-                        continue;
-
-                    bool isTargetGame =
-                        game.GameActions.Any(action =>
-                            action.Type ==
-                                GameActionType.File &&
-                            !string.IsNullOrEmpty(
-                                action.Path
-                            ) &&
-                            NormalizePath(
-                                action.Path
-                            ) == targetPath
-                        );
-
-                    if (!isTargetGame)
-                        continue;
-
-                    game.EnableSystemHdr = true;
-
-                    PlayniteApi.Database.Games.Update(
-                        game
-                    );
-
-                    logger.Info(
-                        $"Enabled system HDR for imported game: {game.Name}"
-                    );
-
-                    pendingHdr = false;
-                    pendingHdrExecutablePath = null;
-
-                    break;
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.Error(
-                    ex,
-                    "Failed to apply HDR."
-                );
-            }
-        }
-
-        // ============================================================
-        // METADATA / PCGAMINGWIKI
-        // ============================================================
-
-        private void CheckPendingMetadata()
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(
-                    pendingMetadataExecutablePath))
-                {
-                    return;
-                }
-
-                string targetPath =
-                    NormalizePath(
-                        pendingMetadataExecutablePath
+                        pendingExecutablePath
                     );
 
                 Game targetGame = null;
@@ -512,11 +187,11 @@ namespace AutoImportPlugin
                     if (game.GameActions == null)
                         continue;
 
-                    bool isTargetGame =
+                    bool matches =
                         game.GameActions.Any(action =>
                             action.Type ==
                                 GameActionType.File &&
-                            !string.IsNullOrEmpty(
+                            !string.IsNullOrWhiteSpace(
                                 action.Path
                             ) &&
                             NormalizePath(
@@ -524,30 +199,178 @@ namespace AutoImportPlugin
                             ) == targetPath
                         );
 
-                    if (isTargetGame)
+                    if (matches)
                     {
                         targetGame = game;
                         break;
                     }
                 }
 
+                // ----------------------------------------------------
+                // LE JEU N'EST PAS ENCORE DANS LA DATABASE
+                // ----------------------------------------------------
+
                 if (targetGame == null)
                 {
                     logger.Info(
-                        "Imported game not found yet. Waiting for Playnite..."
+                        $"Waiting for Playnite to finish importing: {pendingExecutablePath}"
                     );
-
-                    ScheduleMetadataRetry();
 
                     return;
                 }
 
                 logger.Info(
-                    $"Imported game found: {targetGame.Name}"
+                    $"Playnite import detected: {targetGame.Name}"
                 );
 
+                // ----------------------------------------------------
+                // IMPORTANT :
+                // On marque les opérations comme commencées
+                // uniquement maintenant que le jeu existe réellement.
+                // ----------------------------------------------------
+
+                postImportActionsStarted = true;
+
+                string executablePath =
+                    pendingExecutablePath;
+
+                bool hdr =
+                    pendingHdrSupport;
+
+                string controller =
+                    pendingController;
+
+                // On nettoie immédiatement le pending path afin
+                // d'éviter qu'un prochain scan interfère.
+                pendingExecutablePath = null;
+                pendingHdrSupport = false;
+                pendingController = null;
+
+                // ----------------------------------------------------
+                // HDR
+                // ----------------------------------------------------
+
+                if (hdr)
+                {
+                    try
+                    {
+                        targetGame.EnableSystemHdr = true;
+
+                        PlayniteApi.Database.Games.Update(
+                            targetGame
+                        );
+
+                        logger.Info(
+                            $"Enabled system HDR for imported game: {targetGame.Name}"
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error(
+                            ex,
+                            $"Failed to enable HDR for: {targetGame.Name}"
+                        );
+                    }
+                }
+
+                // ----------------------------------------------------
+                // DS4WINDOWS
+                // ----------------------------------------------------
+
+                if (!string.IsNullOrWhiteSpace(controller))
+                {
+                    var selectedForController =
+                        new List<ScannedGameWrapper>();
+
+                    // On crée uniquement le wrapper nécessaire
+                    // à UpdateDS4WindowsProfiles.
+                    selectedForController.Add(
+                        new ScannedGameWrapper
+                        {
+                            GameData =
+                                new GameMetadata
+                                {
+                                    Name =
+                                        targetGame.Name,
+
+                                    GameActions =
+                                        new List<GameAction>
+                                        {
+                                            new GameAction
+                                            {
+                                                Type =
+                                                    GameActionType.File,
+
+                                                Path =
+                                                    executablePath
+                                            }
+                                        }
+                                }
+                        }
+                    );
+
+                    // IMPORTANT :
+                    // ExecutablePath est dérivé de GameData.
+                    // Aucune affectation directe n'est faite dessus.
+                    UpdateDS4WindowsProfiles(
+                        selectedForController,
+                        controller
+                    );
+                }
+                else
+                {
+                    logger.Info(
+                        "No controller selected. DS4Windows profile was not modified."
+                    );
+                }
+
+                // ----------------------------------------------------
+                // RESHADE
+                // ----------------------------------------------------
+
+                LaunchReShadeDeployer(
+                    executablePath
+                );
+
+                // ----------------------------------------------------
+                // PCGAMINGWIKI
+                // ----------------------------------------------------
+
+                OpenPcGamingWikiWhenAvailable(
+                    targetGame
+                );
+            }
+            catch (Exception ex)
+            {
+                logger.Error(
+                    ex,
+                    "Failed during post-import processing"
+                );
+
+                postImportActionsStarted = false;
+            }
+        }
+
+        // ============================================================
+        // PCGAMINGWIKI
+        // ============================================================
+
+        private void OpenPcGamingWikiWhenAvailable(
+            Game game)
+        {
+            try
+            {
+                if (game == null)
+                    return;
+
+                if (openedPcGamingWikiGames.Contains(
+                    game.Id))
+                {
+                    return;
+                }
+
                 var pcGamingWikiLink =
-                    targetGame.Links?
+                    game.Links?
                         .FirstOrDefault(link =>
                             string.Equals(
                                 link.Name,
@@ -556,18 +379,11 @@ namespace AutoImportPlugin
                             )
                         );
 
-                /*
-                 * Le jeu existe mais les métadonnées/liens ne sont
-                 * pas encore disponibles.
-                 */
-
                 if (pcGamingWikiLink == null)
                 {
                     logger.Info(
-                        $"PCGamingWiki link not available yet for: {targetGame.Name}"
+                        $"PCGamingWiki link not available yet for: {game.Name}"
                     );
-
-                    ScheduleMetadataRetry();
 
                     return;
                 }
@@ -576,124 +392,37 @@ namespace AutoImportPlugin
                     pcGamingWikiLink.Url))
                 {
                     logger.Warn(
-                        $"PCGamingWiki link has no URL for: {targetGame.Name}"
+                        $"PCGamingWiki link has no URL for: {game.Name}"
                     );
 
-                    ScheduleMetadataRetry();
-
                     return;
                 }
-
-                if (openedPcGamingWikiGames.Contains(
-                    targetGame.Id))
-                {
-                    pendingMetadataExecutablePath =
-                        null;
-
-                    return;
-                }
-
-                logger.Info(
-                    $"PCGamingWiki link found for {targetGame.Name}: {pcGamingWikiLink.Url}"
-                );
 
                 openedPcGamingWikiGames.Add(
-                    targetGame.Id
+                    game.Id
                 );
 
-                try
-                {
-                    Process.Start(
-                        new ProcessStartInfo
-                        {
-                            FileName =
-                                pcGamingWikiLink.Url,
+                Process.Start(
+                    new ProcessStartInfo
+                    {
+                        FileName =
+                            pcGamingWikiLink.Url,
 
-                            UseShellExecute =
-                                true
-                        }
-                    );
+                        UseShellExecute = true
+                    }
+                );
 
-                    logger.Info(
-                        $"Opened PCGamingWiki page for: {targetGame.Name}"
-                    );
-                }
-                catch (Exception ex)
-                {
-                    logger.Error(
-                        ex,
-                        $"Failed to open PCGamingWiki for: {targetGame.Name}"
-                    );
-                }
-
-                pendingMetadataExecutablePath =
-                    null;
+                logger.Info(
+                    $"Opened PCGamingWiki page for: {game.Name}"
+                );
             }
             catch (Exception ex)
             {
                 logger.Error(
                     ex,
-                    "Failed while checking pending metadata."
+                    $"Failed to open PCGamingWiki for: {game.Name}"
                 );
-
-                ScheduleMetadataRetry();
             }
-        }
-
-        // ============================================================
-        // METADATA RETRY
-        // ============================================================
-
-        private void ScheduleMetadataRetry()
-        {
-            if (string.IsNullOrWhiteSpace(
-                pendingMetadataExecutablePath))
-            {
-                return;
-            }
-
-            if (metadataRetryCount >=
-                MaxMetadataRetries)
-            {
-                logger.Warn(
-                    "Maximum PCGamingWiki metadata retries reached."
-                );
-
-                return;
-            }
-
-            metadataRetryCount++;
-
-            int delay =
-                1500;
-
-            logger.Info(
-                $"PCGamingWiki metadata retry {metadataRetryCount}/{MaxMetadataRetries} in {delay} ms."
-            );
-
-            Application.Current.Dispatcher.BeginInvoke(
-                new Action(() =>
-                {
-                    var timer =
-                        new System.Windows.Threading.DispatcherTimer
-                        {
-                            Interval =
-                                TimeSpan.FromMilliseconds(
-                                    delay
-                                )
-                        };
-
-                    timer.Tick +=
-                        (sender, args) =>
-                        {
-                            timer.Stop();
-
-                            CheckPendingMetadata();
-                        };
-
-                    timer.Start();
-                })
-            );
         }
 
         // ============================================================
@@ -706,7 +435,6 @@ namespace AutoImportPlugin
             {
                 launcherCheckTimer?.Dispose();
                 launcherProcess?.Dispose();
-                postImportTimer?.Dispose();
             }
             catch
             {
@@ -793,10 +521,14 @@ namespace AutoImportPlugin
         // SCAN
         // ============================================================
 
-        private List<GameMetadata> ScanAndSelectGames()
+        private List<GameMetadata>
+            ScanAndSelectGames()
         {
             var allFoundGames =
                 new List<ScannedGameWrapper>();
+
+            // Nouveau scan = nouveau cycle post-import.
+            postImportActionsStarted = false;
 
             if (settings.Settings.ScanFolders == null)
                 return new List<GameMetadata>();
@@ -821,16 +553,16 @@ namespace AutoImportPlugin
             foreach (var folder in
                 settings.Settings.ScanFolders)
             {
-                if (!Directory.Exists(folder))
-                    continue;
-
-                allFoundGames.AddRange(
-                    ScanFolderLimited(
-                        folder,
-                        blockedSet,
-                        existingSet
-                    )
-                );
+                if (Directory.Exists(folder))
+                {
+                    allFoundGames.AddRange(
+                        ScanFolderLimited(
+                            folder,
+                            blockedSet,
+                            existingSet
+                        )
+                    );
+                }
             }
 
             if (allFoundGames.Count == 0)
@@ -859,100 +591,68 @@ namespace AutoImportPlugin
                     var selectedGames =
                         window.SelectedGames;
 
-                    if (selectedGames == null ||
-                        selectedGames.Count == 0)
+                    finalSelection =
+                        selectedGames
+                            .Select(
+                                game =>
+                                    game.GameData
+                            )
+                            .ToList();
+
+                    // ------------------------------------------------
+                    // SI RIEN N'EST SELECTIONNE
+                    // ------------------------------------------------
+
+                    if (selectedGames.Count == 0)
                     {
                         return;
                     }
 
-                    // ====================================================
-                    // PREPARE RETURN VALUE
-                    // ====================================================
+                    // ------------------------------------------------
+                    // IMPORTANT :
+                    // On ne lance PAS encore ReShade / DS4 /
+                    // PCGamingWiki.
+                    //
+                    // On mémorise simplement les paramètres.
+                    // On attend ensuite OnLibraryUpdated().
+                    // ------------------------------------------------
 
-                    finalSelection =
-                        selectedGames
-                            .Select(game =>
-                                game.GameData)
-                            .ToList();
+                    pendingExecutablePath =
+                        selectedGames[0]
+                            .ExecutablePath;
 
-                    /*
-                     * IMPORTANT :
-                     *
-                     * À partir d'ici on ne fait QUE préparer les
-                     * opérations post-import.
-                     *
-                     * On ne lance aucun programme maintenant.
-                     */
-
-                    pendingPostImportExecutables =
-                        selectedGames
-                            .Where(game =>
-                                game != null &&
-                                !string.IsNullOrWhiteSpace(
-                                    game.ExecutablePath
-                                ))
-                            .Select(game =>
-                                game.ExecutablePath)
-                            .ToList();
+                    pendingHdrSupport =
+                        window.EnableHdrSupport;
 
                     pendingController =
                         window.SelectedController;
 
-                    postImportActionsPending =
-                        pendingPostImportExecutables.Count > 0;
+                    logger.Info(
+                        $"Waiting for Playnite import before post-import actions: {pendingExecutablePath}"
+                    );
 
-                    postImportActionsStarted =
-                        false;
+                    logger.Info(
+                        $"HDR: {pendingHdrSupport}"
+                    );
 
-                    // ====================================================
-                    // METADATA TRACKING
-                    // ====================================================
+                    logger.Info(
+                        $"Controller: {pendingController}"
+                    );
 
-                    if (selectedGames.Count > 0)
-                    {
-                        pendingMetadataExecutablePath =
-                            selectedGames[0]
-                                .ExecutablePath;
-
-                        logger.Info(
-                            $"Waiting for Playnite import before checking metadata for: {pendingMetadataExecutablePath}"
-                        );
-                    }
-
-                    // ====================================================
-                    // HDR
-                    // ====================================================
-
-                    pendingHdr =
-                        window.EnableHdrSupport &&
-                        selectedGames.Count > 0;
-
-                    if (pendingHdr)
-                    {
-                        pendingHdrExecutablePath =
-                            selectedGames[0]
-                                .ExecutablePath;
-
-                        logger.Info(
-                            $"HDR requested for: {pendingHdrExecutablePath}"
-                        );
-                    }
-                    else
-                    {
-                        pendingHdrExecutablePath =
-                            null;
-                    }
-
-                    // ====================================================
+                    // ------------------------------------------------
                     // IGNORED GAMES
-                    // ====================================================
+                    // ------------------------------------------------
 
                     var newlyIgnored =
                         allFoundGames
-                            .Where(game =>
-                                game.IsIgnored)
-                            .Select(game =>
-                                game.ExecutablePath)
+                            .Where(
+                                game =>
+                                    game.IsIgnored
+                            )
+                            .Select(
+                                game =>
+                                    game.ExecutablePath
+                            )
                             .ToList();
 
                     if (newlyIgnored.Count > 0)
@@ -960,32 +660,20 @@ namespace AutoImportPlugin
                         foreach (var path in
                             newlyIgnored)
                         {
-                            if (!settings.BlockedPathsUI
+                            if (!settings
+                                .BlockedPathsUI
                                 .Contains(path))
                             {
-                                settings.BlockedPathsUI
+                                settings
+                                    .BlockedPathsUI
                                     .Add(path);
                             }
                         }
 
                         settings.EndEdit();
                     }
-
-                    logger.Info(
-                        $"Prepared {finalSelection.Count} game(s) for Playnite import."
-                    );
-
-                    logger.Info(
-                        "ReShade, DS4Windows and PCGamingWiki will run only after Playnite finishes importing."
-                    );
                 }
             );
-
-            /*
-             * C'EST ICI QUE PLAYNITE REPREND LA MAIN.
-             *
-             * On retourne immédiatement les GameMetadata.
-             */
 
             return finalSelection;
         }
@@ -1029,8 +717,7 @@ namespace AutoImportPlugin
                         controllerValue =
                             "PS4";
 
-                        turnOff =
-                            false;
+                        turnOff = false;
 
                         break;
 
@@ -1039,8 +726,7 @@ namespace AutoImportPlugin
                         controllerValue =
                             "xbox";
 
-                        turnOff =
-                            false;
+                        turnOff = false;
 
                         break;
 
@@ -1049,8 +735,7 @@ namespace AutoImportPlugin
                         controllerValue =
                             "(none)";
 
-                        turnOff =
-                            true;
+                        turnOff = true;
 
                         break;
 
@@ -1088,8 +773,8 @@ namespace AutoImportPlugin
 
                 bool xmlChanged = false;
 
-                foreach (var selectedGame in
-                    selectedGames)
+                foreach (var selectedGame
+                    in selectedGames)
                 {
                     if (selectedGame == null)
                         continue;
@@ -1116,9 +801,9 @@ namespace AutoImportPlugin
                                 {
                                     string path =
                                         (string)
-                                            program.Attribute(
-                                                "path"
-                                            );
+                                        program.Attribute(
+                                            "path"
+                                        );
 
                                     return NormalizePath(
                                         path
@@ -1270,10 +955,6 @@ namespace AutoImportPlugin
                 logger.Info(
                     $"Saved DS4Windows Auto Profiles: {AutoProfilesPath}"
                 );
-
-                // ========================================================
-                // RESTART DS4WINDOWS
-                // ========================================================
 
                 RestartDS4Windows();
             }
@@ -1580,8 +1261,7 @@ namespace AutoImportPlugin
                         "*.exe"
                     );
 
-                foreach (var file in
-                    files)
+                foreach (var file in files)
                 {
                     string normalizedFile =
                         NormalizePath(file);
@@ -1611,11 +1291,8 @@ namespace AutoImportPlugin
                     if (alreadyExists)
                         continue;
 
-                    if (!IsGameExecutable(
-                        file))
-                    {
+                    if (!IsGameExecutable(file))
                         continue;
-                    }
 
                     var fileInfo =
                         new FileInfo(file);
@@ -1792,18 +1469,16 @@ namespace AutoImportPlugin
             string clean =
                 filename.Trim();
 
-            clean =
-                clean
-                    .Replace('.', ' ')
-                    .Replace('_', ' ');
+            clean = clean
+                .Replace('.', ' ')
+                .Replace('_', ' ');
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\[.*?\]|\(.*?\)",
-                    " ",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                @"\[.*?\]|\(.*?\)",
+                " ",
+                RegexOptions.IgnoreCase
+            );
 
             string junkPattern =
                 @"\bv?\d+(\.\d+)+\b" +
@@ -1815,76 +1490,67 @@ namespace AutoImportPlugin
                 @"|\bsetup\b" +
                 @"|\binstaller\b";
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    junkPattern,
-                    " ",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                junkPattern,
+                " ",
+                RegexOptions.IgnoreCase
+            );
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\bdirectors\s+cut\b",
-                    "Director's Cut",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                @"\bdirectors\s+cut\b",
+                "Director's Cut",
+                RegexOptions.IgnoreCase
+            );
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\bdirector\s+cut\b",
-                    "Director's Cut",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                @"\bdirector\s+cut\b",
+                "Director's Cut",
+                RegexOptions.IgnoreCase
+            );
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\bgame\s+of\s+the\s+year\b",
-                    "Game of the Year",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                @"\bgame\s+of\s+the\s+year\b",
+                "Game of the Year",
+                RegexOptions.IgnoreCase
+            );
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\bdefinitive\s+edition\b",
-                    "Definitive Edition",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                @"\bdefinitive\s+edition\b",
+                "Definitive Edition",
+                RegexOptions.IgnoreCase
+            );
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\bcomplete\s+edition\b",
-                    "Complete Edition",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                @"\bcomplete\s+edition\b",
+                "Complete Edition",
+                RegexOptions.IgnoreCase
+            );
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\bultimate\s+edition\b",
-                    "Ultimate Edition",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                @"\bultimate\s+edition\b",
+                "Ultimate Edition",
+                RegexOptions.IgnoreCase
+            );
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\bgoty\b",
-                    "Game of the Year",
-                    RegexOptions.IgnoreCase
-                );
+            clean = Regex.Replace(
+                clean,
+                @"\bgoty\b",
+                "Game of the Year",
+                RegexOptions.IgnoreCase
+            );
 
-            clean =
-                Regex.Replace(
-                    clean,
-                    @"\s+",
-                    " "
-                ).Trim();
+            clean = Regex.Replace(
+                clean,
+                @"\s+",
+                " "
+            ).Trim();
 
             if (string.IsNullOrWhiteSpace(
                 clean))
@@ -1975,29 +1641,26 @@ namespace AutoImportPlugin
                     words
                 );
 
-            result =
-                Regex.Replace(
-                    result,
-                    @"\bDirectors\s+Cut\b",
-                    "Director's Cut",
-                    RegexOptions.IgnoreCase
-                );
+            result = Regex.Replace(
+                result,
+                @"\bDirectors\s+Cut\b",
+                "Director's Cut",
+                RegexOptions.IgnoreCase
+            );
 
-            result =
-                Regex.Replace(
-                    result,
-                    @"\bDirector\s+Cut\b",
-                    "Director's Cut",
-                    RegexOptions.IgnoreCase
-                );
+            result = Regex.Replace(
+                result,
+                @"\bDirector\s+Cut\b",
+                "Director's Cut",
+                RegexOptions.IgnoreCase
+            );
 
-            result =
-                Regex.Replace(
-                    result,
-                    @"\bGame\s+Of\s+The\s+Year\b",
-                    "Game of the Year",
-                    RegexOptions.IgnoreCase
-                );
+            result = Regex.Replace(
+                result,
+                @"\bGame\s+Of\s+The\s+Year\b",
+                "Game of the Year",
+                RegexOptions.IgnoreCase
+            );
 
             return result;
         }
