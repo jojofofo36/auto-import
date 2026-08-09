@@ -18,7 +18,9 @@ namespace AutoImportPlugin
             get
             {
                 return _games
-                    .Where(game => game.IsSelected)
+                    .Where(game =>
+                        game != null &&
+                        game.IsSelected)
                     .ToList();
             }
         }
@@ -62,13 +64,15 @@ namespace AutoImportPlugin
         {
             InitializeComponent();
 
-            _games = foundGames;
+            _games =
+                foundGames ??
+                new List<ScannedGameWrapper>();
 
-            GridGames.ItemsSource = _games;
+            GridGames.ItemsSource =
+                _games;
 
-            // Valeur par défaut :
-            // PS4
-            CmbController.SelectedIndex = 0;
+            CmbController.SelectedIndex =
+                0;
         }
 
         // ============================================================
@@ -79,8 +83,37 @@ namespace AutoImportPlugin
             object sender,
             RoutedEventArgs e)
         {
+            /*
+             * Force la DataGrid à terminer toute éventuelle édition
+             * avant de lire IsSelected.
+             */
+
+            GridGames.CommitEdit(
+                DataGridEditingUnit.Cell,
+                true
+            );
+
+            GridGames.CommitEdit(
+                DataGridEditingUnit.Row,
+                true
+            );
+
+            var selected =
+                SelectedGames;
+
+            if (selected.Count == 0)
+            {
+                MessageBox.Show(
+                    "Please select at least one game to import.",
+                    "AutoImport",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information
+                );
+
+                return;
+            }
+
             DialogResult = true;
-            Close();
         }
 
         // ============================================================
@@ -92,7 +125,6 @@ namespace AutoImportPlugin
             RoutedEventArgs e)
         {
             DialogResult = false;
-            Close();
         }
     }
 }
