@@ -28,46 +28,26 @@ namespace AutoImportPlugin
         // DS4WINDOWS
         // ============================================================
 
-        // Installation DS4Windows utilisée uniquement par Hugo.
-        private const string Ds4WindowsUserName = "Hugo";
-
-        private const string Ds4WindowsExePath =
+        private const string DS4WindowsPath =
             @"C:\Program Files (x86)\net8.0-windows7.0.Full\DS4Windows.exe";
 
-        // Auto Profiles.xml se trouve dans le même dossier que DS4Windows.exe.
-        private static string Ds4WindowsAutoProfilesPath
-        {
-            get
-            {
-                string directory =
-                    Path.GetDirectoryName(Ds4WindowsExePath);
+        private const string DS4WindowsProcessName =
+            "DS4Windows";
 
-                return Path.Combine(
-                    directory,
-                    "Auto Profiles.xml"
-                );
-            }
-        }
-
-        // Controller choisi dans la fenêtre :
-        // PS4 / XBOX / OFF
-        private string pendingControllerSelection;
+        private const string AutoProfilesPath =
+            @"C:\Program Files (x86)\net8.0-windows7.0.Full\Auto Profiles.xml";
 
         // ============================================================
-        // HDR
+        // PENDING DATA
         // ============================================================
 
-        // Chemin de l'exécutable du jeu pour lequel le HDR doit être activé.
+        // Chemin de l'exécutable du jeu pour lequel le HDR doit être activé
         private string pendingHdrExecutablePath;
 
-        // ============================================================
-        // METADATA
-        // ============================================================
-
-        // Chemin de l'exécutable du jeu dont on attend les métadonnées.
+        // Chemin de l'exécutable du jeu dont on attend les métadonnées
         private string pendingMetadataExecutablePath;
 
-        // Jeux pour lesquels le lien PCGamingWiki a déjà été ouvert.
+        // Jeux pour lesquels le lien PCGamingWiki a déjà été ouvert
         private readonly HashSet<Guid> openedPcGamingWikiGames =
             new HashSet<Guid>();
 
@@ -145,7 +125,7 @@ namespace AutoImportPlugin
                 // ========================================================
 
                 var processes =
-                    Process.GetProcessesByName("Project GLD");
+                    Process.GetProcessesByName("launcher");
 
                 if (processes.Length > 0)
                 {
@@ -199,7 +179,7 @@ namespace AutoImportPlugin
                                 action.Type == GameActionType.File &&
                                 !string.IsNullOrEmpty(action.Path) &&
                                 NormalizePath(action.Path) ==
-                                    targetPath
+                                targetPath
                             );
 
                         if (!isTargetGame)
@@ -241,7 +221,7 @@ namespace AutoImportPlugin
                                 action.Type == GameActionType.File &&
                                 !string.IsNullOrEmpty(action.Path) &&
                                 NormalizePath(action.Path) ==
-                                    targetPath
+                                targetPath
                             );
 
                         if (!isTargetGame)
@@ -438,7 +418,8 @@ namespace AutoImportPlugin
 
             if (settings.Settings.BlockedPaths != null)
             {
-                foreach (var path in settings.Settings.BlockedPaths)
+                foreach (var path in
+                    settings.Settings.BlockedPaths)
                 {
                     blockedSet.Add(
                         NormalizePath(path)
@@ -449,7 +430,8 @@ namespace AutoImportPlugin
             var existingSet =
                 BuildExistingGamesSet();
 
-            foreach (var folder in settings.Settings.ScanFolders)
+            foreach (var folder in
+                settings.Settings.ScanFolders)
             {
                 if (Directory.Exists(folder))
                 {
@@ -493,6 +475,31 @@ namespace AutoImportPlugin
                             .ToList();
 
                     // ====================================================
+                    // DS4WINDOWS AUTO PROFILE
+                    // ====================================================
+
+                    if (selectedGames.Count > 0)
+                    {
+                        string selectedController =
+                            window.SelectedController;
+
+                        if (!string.IsNullOrWhiteSpace(
+                            selectedController))
+                        {
+                            UpdateDS4WindowsProfiles(
+                                selectedGames,
+                                selectedController
+                            );
+                        }
+                        else
+                        {
+                            logger.Info(
+                                "No controller selected. DS4Windows profile was not modified."
+                            );
+                        }
+                    }
+
+                    // ====================================================
                     // METADATA TRACKING
                     // ====================================================
 
@@ -518,32 +525,6 @@ namespace AutoImportPlugin
 
                         logger.Info(
                             $"HDR requested for: {pendingHdrExecutablePath}"
-                        );
-                    }
-                    else
-                    {
-                        pendingHdrExecutablePath = null;
-                    }
-
-                    // ====================================================
-                    // DS4WINDOWS CONTROLLER
-                    // ====================================================
-
-                    pendingControllerSelection =
-                        window.SelectedController;
-
-                    if (selectedGames.Count > 0)
-                    {
-                        foreach (var selectedGame in selectedGames)
-                        {
-                            UpdateDs4WindowsAutoProfile(
-                                selectedGame.ExecutablePath,
-                                pendingControllerSelection
-                            );
-                        }
-
-                        logger.Info(
-                            $"DS4Windows controller selection '{pendingControllerSelection}' applied to {selectedGames.Count} game(s) for user {Ds4WindowsUserName}."
                         );
                     }
 
@@ -590,321 +571,464 @@ namespace AutoImportPlugin
         }
 
         // ============================================================
-        // DS4WINDOWS - AUTO PROFILE
+        // DS4WINDOWS - UPDATE AUTO PROFILES.XML
         // ============================================================
 
-        private void UpdateDs4WindowsAutoProfile(
-            string executablePath,
-            string controllerSelection)
+        private void UpdateDS4WindowsProfiles(
+            List<ScannedGameWrapper> selectedGames,
+            string selectedController)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(executablePath))
+                if (selectedGames == null ||
+                    selectedGames.Count == 0)
                 {
-                    logger.Warn(
-                        "Cannot update DS4Windows profile: executable path is empty."
+                    return;
+                }
+
+                if (!File.Exists(AutoProfilesPath))
+                {
+                    logger.Error(
+                        $"Auto Profiles.xml not found: {AutoProfilesPath}"
                     );
 
                     return;
                 }
 
-                if (!File.Exists(executablePath))
-                {
-                    logger.Warn(
-                        $"Cannot update DS4Windows profile: executable not found: {executablePath}"
-                    );
-
-                    return;
-                }
-
-                string autoProfilesPath =
-                    Ds4WindowsAutoProfilesPath;
-
-                string ds4Directory =
-                    Path.GetDirectoryName(
-                        Ds4WindowsExePath
-                    );
-
-                if (!File.Exists(Ds4WindowsExePath))
-                {
-                    logger.Warn(
-                        $"DS4Windows executable not found for user {Ds4WindowsUserName}: {Ds4WindowsExePath}"
-                    );
-
-                    return;
-                }
-
-                if (!File.Exists(autoProfilesPath))
-                {
-                    logger.Warn(
-                        $"DS4Windows Auto Profiles.xml not found: {autoProfilesPath}"
-                    );
-
-                    return;
-                }
-
-                // ========================================================
-                // CONVERSION DU CHOIX DE LA LISTE
-                // ========================================================
+                // --------------------------------------------------------
+                // CONTROLLER MAPPING
+                // --------------------------------------------------------
 
                 string controllerValue;
                 bool turnOff;
 
                 switch (
-                    (controllerSelection ?? string.Empty)
+                    selectedController
                         .Trim()
                         .ToUpperInvariant())
                 {
                     case "PS4":
+
                         controllerValue = "PS4";
                         turnOff = false;
+
                         break;
 
                     case "XBOX":
+
                         controllerValue = "xbox";
                         turnOff = false;
+
                         break;
 
                     case "OFF":
+
                         controllerValue = "(none)";
                         turnOff = true;
+
                         break;
 
                     default:
+
                         logger.Warn(
-                            $"Unknown DS4Windows controller selection: '{controllerSelection}'. No XML modification performed."
+                            $"Unknown controller selection: {selectedController}"
                         );
 
                         return;
                 }
 
-                // ========================================================
-                // CHARGEMENT DU XML
-                // ========================================================
+                logger.Info(
+                    $"Updating DS4Windows profiles: Controller1={controllerValue}, TurnOff={turnOff}"
+                );
+
+                // --------------------------------------------------------
+                // LOAD XML
+                // --------------------------------------------------------
 
                 XDocument document =
                     XDocument.Load(
-                        autoProfilesPath,
+                        AutoProfilesPath,
                         LoadOptions.PreserveWhitespace
                     );
 
-                XElement root =
-                    document.Element("Programs");
+                XElement programs =
+                    document.Root;
 
-                if (root == null)
+                if (programs == null ||
+                    programs.Name != "Programs")
                 {
-                    logger.Warn(
-                        $"Invalid DS4Windows Auto Profiles.xml: <Programs> root not found in {autoProfilesPath}"
+                    logger.Error(
+                        "Auto Profiles.xml has an invalid root element."
                     );
 
                     return;
                 }
 
-                string normalizedTargetPath =
-                    NormalizePath(executablePath);
+                bool xmlChanged = false;
 
-                // ========================================================
-                // RECHERCHE D'UNE ENTRÉE EXISTANTE
-                // ========================================================
+                // --------------------------------------------------------
+                // UPDATE EACH SELECTED GAME
+                // --------------------------------------------------------
 
-                XElement existingProgram =
-                    root.Elements("Program")
-                        .FirstOrDefault(program =>
-                        {
-                            string path =
-                                (string)program.Attribute("path");
-
-                            return NormalizePath(path) ==
-                                normalizedTargetPath;
-                        });
-
-                if (existingProgram == null)
+                foreach (var selectedGame in selectedGames)
                 {
-                    // ====================================================
-                    // NOUVELLE ENTRÉE
-                    // ====================================================
+                    if (selectedGame == null)
+                        continue;
 
-                    existingProgram =
-                        new XElement(
-                            "Program",
-                            new XAttribute(
-                                "path",
-                                executablePath
-                            ),
-                            new XAttribute(
-                                "title",
-                                ""
-                            ),
-                            new XElement(
-                                "Controller1",
-                                controllerValue
-                            ),
-                            new XElement(
-                                "Controller2",
-                                "(none)"
-                            ),
-                            new XElement(
-                                "Controller3",
-                                "(none)"
-                            ),
-                            new XElement(
-                                "Controller4",
-                                "(none)"
-                            ),
-                            new XElement(
-                                "Controller5",
-                                "(none)"
-                            ),
-                            new XElement(
-                                "Controller6",
-                                "(none)"
-                            ),
-                            new XElement(
-                                "Controller7",
-                                "(none)"
-                            ),
-                            new XElement(
-                                "Controller8",
-                                "(none)"
-                            ),
-                            new XElement(
-                                "TurnOff",
-                                turnOff ? "True" : "False"
-                            )
+                    string executablePath =
+                        selectedGame.ExecutablePath;
+
+                    if (string.IsNullOrWhiteSpace(
+                        executablePath))
+                    {
+                        continue;
+                    }
+
+                    string normalizedTarget =
+                        NormalizePath(
+                            executablePath
                         );
 
-                    root.Add(existingProgram);
+                    XElement existingProgram =
+                        programs
+                            .Elements("Program")
+                            .FirstOrDefault(program =>
+                            {
+                                string path =
+                                    (string)program.Attribute("path");
 
-                    logger.Info(
-                        $"Added DS4Windows Auto Profile for: {executablePath} | Controller1={controllerValue} | TurnOff={turnOff}"
-                    );
+                                return NormalizePath(path) ==
+                                    normalizedTarget;
+                            });
+
+                    if (existingProgram == null)
+                    {
+                        // ------------------------------------------------
+                        // NEW PROGRAM ENTRY
+                        // ------------------------------------------------
+
+                        existingProgram =
+                            new XElement(
+                                "Program",
+                                new XAttribute(
+                                    "path",
+                                    executablePath
+                                ),
+                                new XAttribute(
+                                    "title",
+                                    ""
+                                ),
+                                new XElement(
+                                    "Controller1",
+                                    controllerValue
+                                ),
+                                new XElement(
+                                    "Controller2",
+                                    "(none)"
+                                ),
+                                new XElement(
+                                    "Controller3",
+                                    "(none)"
+                                ),
+                                new XElement(
+                                    "Controller4",
+                                    "(none)"
+                                ),
+                                new XElement(
+                                    "Controller5",
+                                    "(none)"
+                                ),
+                                new XElement(
+                                    "Controller6",
+                                    "(none)"
+                                ),
+                                new XElement(
+                                    "Controller7",
+                                    "(none)"
+                                ),
+                                new XElement(
+                                    "Controller8",
+                                    "(none)"
+                                ),
+                                new XElement(
+                                    "TurnOff",
+                                    turnOff
+                                        ? "True"
+                                        : "False"
+                                )
+                            );
+
+                        programs.Add(
+                            existingProgram
+                        );
+
+                        logger.Info(
+                            $"Added DS4Windows Auto Profile for: {executablePath}"
+                        );
+                    }
+                    else
+                    {
+                        // ------------------------------------------------
+                        // EXISTING PROGRAM ENTRY
+                        // ------------------------------------------------
+
+                        XElement controller1 =
+                            existingProgram.Element(
+                                "Controller1"
+                            );
+
+                        if (controller1 == null)
+                        {
+                            existingProgram.Add(
+                                new XElement(
+                                    "Controller1",
+                                    controllerValue
+                                )
+                            );
+                        }
+                        else
+                        {
+                            controller1.Value =
+                                controllerValue;
+                        }
+
+                        XElement turnOffElement =
+                            existingProgram.Element(
+                                "TurnOff"
+                            );
+
+                        if (turnOffElement == null)
+                        {
+                            existingProgram.Add(
+                                new XElement(
+                                    "TurnOff",
+                                    turnOff
+                                        ? "True"
+                                        : "False"
+                                )
+                            );
+                        }
+                        else
+                        {
+                            turnOffElement.Value =
+                                turnOff
+                                    ? "True"
+                                    : "False";
+                        }
+
+                        logger.Info(
+                            $"Updated DS4Windows Auto Profile for: {executablePath}"
+                        );
+                    }
+
+                    xmlChanged = true;
                 }
-                else
+
+                // --------------------------------------------------------
+                // SAVE XML
+                // --------------------------------------------------------
+
+                if (!xmlChanged)
                 {
-                    // ====================================================
-                    // MISE À JOUR D'UNE ENTRÉE EXISTANTE
-                    // ====================================================
-
-                    SetXmlElementValue(
-                        existingProgram,
-                        "Controller1",
-                        controllerValue
-                    );
-
-                    SetXmlElementValue(
-                        existingProgram,
-                        "TurnOff",
-                        turnOff ? "True" : "False"
-                    );
-
-                    // On s'assure que Controller2-8 existent.
-                    EnsureControllerElement(
-                        existingProgram,
-                        "Controller2"
-                    );
-
-                    EnsureControllerElement(
-                        existingProgram,
-                        "Controller3"
-                    );
-
-                    EnsureControllerElement(
-                        existingProgram,
-                        "Controller4"
-                    );
-
-                    EnsureControllerElement(
-                        existingProgram,
-                        "Controller5"
-                    );
-
-                    EnsureControllerElement(
-                        existingProgram,
-                        "Controller6"
-                    );
-
-                    EnsureControllerElement(
-                        existingProgram,
-                        "Controller7"
-                    );
-
-                    EnsureControllerElement(
-                        existingProgram,
-                        "Controller8"
-                    );
-
                     logger.Info(
-                        $"Updated DS4Windows Auto Profile for: {executablePath} | Controller1={controllerValue} | TurnOff={turnOff}"
+                        "No DS4Windows Auto Profile changes were necessary."
                     );
-                }
 
-                // ========================================================
-                // SAUVEGARDE
-                // ========================================================
+                    return;
+                }
 
                 document.Save(
-                    autoProfilesPath,
+                    AutoProfilesPath,
                     SaveOptions.DisableFormatting
                 );
 
                 logger.Info(
-                    $"DS4Windows Auto Profiles.xml successfully saved: {autoProfilesPath}"
+                    $"Saved DS4Windows Auto Profiles: {AutoProfilesPath}"
+                );
+
+                // --------------------------------------------------------
+                // RESTART DS4WINDOWS
+                // --------------------------------------------------------
+
+                RestartDS4Windows();
+            }
+            catch (Exception ex)
+            {
+                logger.Error(
+                    ex,
+                    "Failed to update DS4Windows Auto Profiles.xml"
+                );
+            }
+        }
+
+        // ============================================================
+        // DS4WINDOWS - RESTART
+        // ============================================================
+
+        private void RestartDS4Windows()
+        {
+            try
+            {
+                logger.Info(
+                    "Stopping DS4Windows..."
+                );
+
+                // --------------------------------------------------------
+                // KILL DS4WINDOWS + CHILD PROCESSES
+                // --------------------------------------------------------
+
+                var killInfo =
+                    new ProcessStartInfo
+                    {
+                        FileName = "taskkill.exe",
+
+                        Arguments =
+                            "/F /T /IM DS4Windows.exe",
+
+                        UseShellExecute = false,
+
+                        CreateNoWindow = true,
+
+                        RedirectStandardOutput = true,
+
+                        RedirectStandardError = true
+                    };
+
+                using (var killProcess =
+                    Process.Start(killInfo))
+                {
+                    if (killProcess != null)
+                    {
+                        killProcess.WaitForExit(5000);
+
+                        string output =
+                            killProcess
+                                .StandardOutput
+                                .ReadToEnd();
+
+                        string error =
+                            killProcess
+                                .StandardError
+                                .ReadToEnd();
+
+                        if (!string.IsNullOrWhiteSpace(
+                            output))
+                        {
+                            logger.Info(
+                                $"taskkill output: {output}"
+                            );
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(
+                            error))
+                        {
+                            logger.Warn(
+                                $"taskkill error: {error}"
+                            );
+                        }
+                    }
+                }
+
+                // --------------------------------------------------------
+                // ATTEND QUE DS4WINDOWS SOIT VRAIMENT FERMÉ
+                // --------------------------------------------------------
+
+                bool stillRunning = true;
+
+                for (int i = 0; i < 20; i++)
+                {
+                    var processes =
+                        Process.GetProcessesByName(
+                            DS4WindowsProcessName
+                        );
+
+                    stillRunning =
+                        processes.Length > 0;
+
+                    foreach (var process in processes)
+                    {
+                        process.Dispose();
+                    }
+
+                    if (!stillRunning)
+                        break;
+
+                    System.Threading.Thread.Sleep(250);
+                }
+
+                // --------------------------------------------------------
+                // VÉRIFICATION FINALE
+                // --------------------------------------------------------
+
+                var remainingProcesses =
+                    Process.GetProcessesByName(
+                        DS4WindowsProcessName
+                    );
+
+                bool ds4StillRunning =
+                    remainingProcesses.Length > 0;
+
+                foreach (var process in
+                    remainingProcesses)
+                {
+                    process.Dispose();
+                }
+
+                if (ds4StillRunning)
+                {
+                    logger.Error(
+                        "DS4Windows is still running after taskkill. Aborting restart."
+                    );
+
+                    return;
+                }
+
+                // --------------------------------------------------------
+                // VÉRIFICATION DE L'EXE
+                // --------------------------------------------------------
+
+                if (!File.Exists(
+                    DS4WindowsPath))
+                {
+                    logger.Error(
+                        $"DS4Windows executable not found: {DS4WindowsPath}"
+                    );
+
+                    return;
+                }
+
+                // --------------------------------------------------------
+                // RELANCE
+                // --------------------------------------------------------
+
+                logger.Info(
+                    "Starting DS4Windows..."
+                );
+
+                Process.Start(
+                    new ProcessStartInfo
+                    {
+                        FileName =
+                            DS4WindowsPath,
+
+                        WorkingDirectory =
+                            Path.GetDirectoryName(
+                                DS4WindowsPath
+                            ),
+
+                        UseShellExecute = true
+                    }
+                );
+
+                logger.Info(
+                    "DS4Windows restarted successfully."
                 );
             }
             catch (Exception ex)
             {
                 logger.Error(
                     ex,
-                    $"Failed to update DS4Windows Auto Profiles.xml for: {executablePath}"
-                );
-            }
-        }
-
-        // ============================================================
-        // XML HELPER
-        // ============================================================
-
-        private void SetXmlElementValue(
-            XElement parent,
-            string elementName,
-            string value)
-        {
-            XElement element =
-                parent.Element(elementName);
-
-            if (element == null)
-            {
-                parent.Add(
-                    new XElement(
-                        elementName,
-                        value
-                    )
-                );
-            }
-            else
-            {
-                element.Value = value;
-            }
-        }
-
-        // ============================================================
-        // XML CONTROLLER HELPER
-        // ============================================================
-
-        private void EnsureControllerElement(
-            XElement parent,
-            string controllerName)
-        {
-            XElement element =
-                parent.Element(controllerName);
-
-            if (element == null)
-            {
-                parent.Add(
-                    new XElement(
-                        controllerName,
-                        "(none)"
-                    )
+                    "Failed to restart DS4Windows."
                 );
             }
         }
@@ -918,7 +1042,8 @@ namespace AutoImportPlugin
         {
             try
             {
-                if (!File.Exists(ReShadeDeployerPath))
+                if (!File.Exists(
+                    ReShadeDeployerPath))
                 {
                     logger.Warn(
                         $"ReShade Deployer not found: {ReShadeDeployerPath}"
@@ -1075,7 +1200,8 @@ namespace AutoImportPlugin
                         var metadata =
                             new GameMetadata
                             {
-                                Name = gameName,
+                                Name =
+                                    gameName,
 
                                 GameId =
                                     fileInfo.FullName,
@@ -1083,7 +1209,8 @@ namespace AutoImportPlugin
                                 InstallDirectory =
                                     fileInfo.DirectoryName,
 
-                                IsInstalled = true,
+                                IsInstalled =
+                                    true,
 
                                 Platforms =
                                     new HashSet<MetadataProperty>
@@ -1157,7 +1284,8 @@ namespace AutoImportPlugin
                     )
                 );
 
-            if (string.IsNullOrWhiteSpace(folderName))
+            if (string.IsNullOrWhiteSpace(
+                folderName))
             {
                 return "Unknown Game";
             }
@@ -1165,7 +1293,8 @@ namespace AutoImportPlugin
             string cleanFolderName =
                 CleanGameName(folderName);
 
-            if (!string.IsNullOrWhiteSpace(cleanFolderName))
+            if (!string.IsNullOrWhiteSpace(
+                cleanFolderName))
             {
                 return cleanFolderName;
             }
@@ -1182,8 +1311,11 @@ namespace AutoImportPlugin
         private bool IsValidGameName(
             string name)
         {
-            if (string.IsNullOrWhiteSpace(name))
+            if (string.IsNullOrWhiteSpace(
+                name))
+            {
                 return false;
+            }
 
             if (name.Length < 2)
                 return false;
@@ -1233,12 +1365,14 @@ namespace AutoImportPlugin
             string clean =
                 filename.Trim();
 
-            // Remplace les séparateurs courants par des espaces.
+            // Remplace les séparateurs courants
+            // par des espaces.
             clean = clean
                 .Replace('.', ' ')
                 .Replace('_', ' ');
 
-            // Supprime les informations entre crochets / parenthèses.
+            // Supprime les informations entre
+            // crochets / parenthèses.
             clean = Regex.Replace(
                 clean,
                 @"\[.*?\]|\(.*?\)",
@@ -1321,14 +1455,18 @@ namespace AutoImportPlugin
                 " "
             ).Trim();
 
-            if (string.IsNullOrWhiteSpace(clean))
+            if (string.IsNullOrWhiteSpace(
+                clean))
+            {
                 return string.Empty;
+            }
 
             // Capitalisation douce :
-            // on conserve les mots déjà contenant des majuscules
-            // internes et on normalise surtout les noms entièrement
-            // en majuscules provenant des dossiers.
-            if (clean == clean.ToUpperInvariant())
+            // on conserve les mots déjà contenant
+            // des majuscules internes et on normalise
+            // surtout les noms entièrement en majuscules.
+            if (clean ==
+                clean.ToUpperInvariant())
             {
                 clean =
                     ToTitleCasePreservingSpecialWords(
@@ -1352,13 +1490,18 @@ namespace AutoImportPlugin
                     StringSplitOptions.RemoveEmptyEntries
                 );
 
-            for (int i = 0; i < words.Length; i++)
+            for (int i = 0;
+                 i < words.Length;
+                 i++)
             {
                 string word =
                     words[i];
 
-                if (string.IsNullOrWhiteSpace(word))
+                if (string.IsNullOrWhiteSpace(
+                    word))
+                {
                     continue;
+                }
 
                 if (word.Contains("'"))
                 {
@@ -1368,9 +1511,12 @@ namespace AutoImportPlugin
                             StringSplitOptions.None
                         );
 
-                    for (int j = 0; j < parts.Length; j++)
+                    for (int j = 0;
+                         j < parts.Length;
+                         j++)
                     {
-                        if (!string.IsNullOrEmpty(parts[j]))
+                        if (!string.IsNullOrEmpty(
+                            parts[j]))
                         {
                             parts[j] =
                                 char.ToUpper(
