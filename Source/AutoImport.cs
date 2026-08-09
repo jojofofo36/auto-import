@@ -59,7 +59,22 @@ namespace AutoImportPlugin
 
             public bool PcGamingWikiOpened { get; set; }
 
+            /*
+             * IMPORTANT :
+             *
+             * MetadataReady ne veut pas simplement dire que le jeu
+             * existe dans la DB.
+             *
+             * On attend réellement que Playnite ait terminé son
+             * traitement des métadonnées.
+             */
             public bool MetadataReady { get; set; }
+
+            /*
+             * Permet d'attendre plusieurs cycles après la détection
+             * du jeu avant de considérer les métadonnées terminées.
+             */
+            public int MetadataStableChecks { get; set; }
         }
 
         private readonly List<PendingImportedGame>
@@ -77,7 +92,7 @@ namespace AutoImportPlugin
 
         private readonly HashSet<Guid>
             openedPcGamingWikiGames =
-            new HashSet<Guid>();
+                new HashSet<Guid>();
 
         // ============================================================
         // ID
@@ -143,14 +158,11 @@ namespace AutoImportPlugin
             /*
              * IMPORTANT :
              *
-             * Cette méthode doit uniquement :
+             * GetGames() doit uniquement scanner, afficher la
+             * sélection et retourner les GameMetadata à Playnite.
              *
-             * 1. scanner
-             * 2. afficher la fenêtre
-             * 3. retourner les GameMetadata
-             *
-             * Tout ce qui dépend de l'import réel dans Playnite
-             * est lancé APRES le retour de cette méthode.
+             * Aucune opération DS4 / ReShade / PCGamingWiki ne doit
+             * être exécutée ici.
              */
 
             return ScanAndSelectGames();
@@ -218,13 +230,13 @@ namespace AutoImportPlugin
             base.OnLibraryUpdated(args);
 
             /*
-             * On ne lance PAS directement ici les opérations.
+             * C'est ici que l'on démarre le traitement post-import.
              *
-             * Le timer post-import s'occupe de vérifier que les jeux
-             * existent réellement dans la base Playnite.
-             *
-             * Cette méthode est volontairement légère.
+             * Playnite a terminé son opération de bibliothèque et
+             * nous pouvons maintenant attendre que les jeux soient
+             * réellement présents.
              */
+
             try
             {
                 StartPostImportTimerIfNeeded();
@@ -263,8 +275,8 @@ namespace AutoImportPlugin
                 new System.Threading.Timer(
                     ProcessPendingImports,
                     null,
-                    1500,
-                    1500
+                    2000,
+                    2000
                 );
         }
 
@@ -314,8 +326,6 @@ namespace AutoImportPlugin
                     return;
                 }
 
-                bool somethingChanged = false;
-
                 foreach (var pending in snapshot)
                 {
                     if (pending == null)
@@ -325,7 +335,6 @@ namespace AutoImportPlugin
                         pending.ExecutablePath))
                     {
                         RemovePendingGame(pending);
-                        somethingChanged = true;
                         continue;
                     }
 
@@ -339,9 +348,9 @@ namespace AutoImportPlugin
                             targetPath
                         );
 
-                    // ----------------------------------------------------
-                    // PLAYNITE N'A PAS ENCORE FINI L'IMPORT
-                    // ----------------------------------------------------
+                    // =================================================
+                    // 1. PLAYNITE N'A PAS ENCORE IMPORTÉ LE JEU
+                    // =================================================
 
                     if (playniteGame == null)
                     {
@@ -356,9 +365,74 @@ namespace AutoImportPlugin
                         $"Game found in Playnite database: {playniteGame.Name}"
                     );
 
-                    // ----------------------------------------------------
-                    // DS4WINDOWS
-                    // ----------------------------------------------------
+                    // =================================================
+                    // 2. ATTENDRE LES MÉTADONNÉES
+                    // =================================================
+
+                    if (!pending.MetadataReady)
+                    {
+                        if (!AreMetadataReady(playniteGame))
+                        {
+                            logger.Info(
+                                $"Waiting for Playnite metadata to finish: {playniteGame.Name}"
+                            );
+
+                            pending.MetadataStableChecks = 0;
+
+                            continue;
+                        }
+
+                        pending.MetadataStableChecks++;
+
+                        /*
+                         * On demande plusieurs vérifications
+                         * successives.
+                         *
+                         * Cela évite de déclencher ReShade / DS4 / Wiki
+                         * pendant que Playnite est encore en train de
+                         * modifier les données du jeu.
+                         */
+                        if (pending.MetadataStableChecks < 3)
+                        {
+                            logger.Info(
+                                $"Metadata detected for {playniteGame.Name}, waiting for metadata to stabilize ({pending.MetadataStableChecks}/3)."
+                            );
+
+                            continue;
+                        }
+
+                        pending.MetadataReady = true;
+
+                        logger.Info(
+                            $"Playnite metadata is ready for: {playniteGame.Name}"
+                        );
+                    }
+
+                    // =================================================
+                    // 3. HDR
+                    // =================================================
+
+                    if (pending.EnableHdr)
+                    {
+                        if (!playniteGame.EnableSystemHdr)
+                        {
+                            playniteGame.EnableSystemHdr = true;
+
+                            PlayniteApi.Database.Games.Update(
+                                playniteGame
+                            );
+
+                            logger.Info(
+                                $"Enabled system HDR for imported game: {playniteGame.Name}"
+                            );
+                        }
+
+                        pending.EnableHdr = false;
+                    }
+
+                    // =================================================
+                    // 4. DS4WINDOWS
+                    // =================================================
 
                     if (!pending.Ds4Updated)
                     {
@@ -377,12 +451,14 @@ namespace AutoImportPlugin
 
                         pending.Ds4Updated = true;
 
-                        somethingChanged = true;
+                        logger.Info(
+                            $"DS4Windows processing completed for: {playniteGame.Name}"
+                        );
                     }
 
-                    // ----------------------------------------------------
-                    // RESHADE
-                    // ----------------------------------------------------
+                    // =================================================
+                    // 5. RESHADE
+                    // =================================================
 
                     if (!pending.ReShadeStarted)
                     {
@@ -392,36 +468,14 @@ namespace AutoImportPlugin
 
                         pending.ReShadeStarted = true;
 
-                        somethingChanged = true;
+                        logger.Info(
+                            $"ReShade processing completed for: {playniteGame.Name}"
+                        );
                     }
 
-                    // ----------------------------------------------------
-                    // HDR
-                    // ----------------------------------------------------
-
-                    if (pending.EnableHdr)
-                    {
-                        if (!playniteGame.EnableSystemHdr)
-                        {
-                            playniteGame.EnableSystemHdr = true;
-
-                            PlayniteApi.Database.Games.Update(
-                                playniteGame
-                            );
-
-                            logger.Info(
-                                $"Enabled system HDR for imported game: {playniteGame.Name}"
-                            );
-                        }
-
-                        pending.EnableHdr = false;
-
-                        somethingChanged = true;
-                    }
-
-                    // ----------------------------------------------------
-                    // METADATA / PCGAMINGWIKI
-                    // ----------------------------------------------------
+                    // =================================================
+                    // 6. PCGAMINGWIKI
+                    // =================================================
 
                     if (!pending.PcGamingWikiOpened)
                     {
@@ -438,14 +492,8 @@ namespace AutoImportPlugin
 
                         if (pcGamingWikiLink == null)
                         {
-                            /*
-                             * Le jeu est importé mais les métadonnées
-                             * ne sont pas encore arrivées.
-                             *
-                             * On laisse le timer tourner.
-                             */
                             logger.Info(
-                                $"Waiting for metadata / PCGamingWiki link for: {playniteGame.Name}"
+                                $"Waiting for PCGamingWiki metadata link for: {playniteGame.Name}"
                             );
 
                             continue;
@@ -459,8 +507,6 @@ namespace AutoImportPlugin
                             );
 
                             pending.PcGamingWikiOpened = true;
-
-                            somethingChanged = true;
 
                             continue;
                         }
@@ -476,7 +522,8 @@ namespace AutoImportPlugin
                                         FileName =
                                             pcGamingWikiLink.Url,
 
-                                        UseShellExecute = true
+                                        UseShellExecute =
+                                            true
                                     }
                                 );
 
@@ -494,31 +541,36 @@ namespace AutoImportPlugin
                                     ex,
                                     $"Failed to open PCGamingWiki for: {playniteGame.Name}"
                                 );
+
+                                /*
+                                 * On ne considère pas l'opération comme
+                                 * terminée en cas d'erreur.
+                                 *
+                                 * Le timer réessaiera.
+                                 */
+                                continue;
                             }
                         }
 
                         pending.PcGamingWikiOpened = true;
-
-                        somethingChanged = true;
                     }
 
-                    // ----------------------------------------------------
-                    // FIN
-                    // ----------------------------------------------------
+                    // =================================================
+                    // 7. FIN
+                    // =================================================
 
-                    if (pending.Ds4Updated &&
+                    if (pending.MetadataReady &&
+                        pending.Ds4Updated &&
                         pending.ReShadeStarted &&
                         !pending.EnableHdr &&
                         pending.PcGamingWikiOpened)
                     {
-                        RemovePendingGame(
-                            pending
-                        );
-
-                        somethingChanged = true;
-
                         logger.Info(
                             $"Post-import processing completed for: {playniteGame.Name}"
+                        );
+
+                        RemovePendingGame(
+                            pending
                         );
                     }
                 }
@@ -538,6 +590,89 @@ namespace AutoImportPlugin
                     "Failed during post-import processing"
                 );
             }
+        }
+
+        // ============================================================
+        // METADATA READY
+        // ============================================================
+
+        private bool AreMetadataReady(
+            Game playniteGame)
+        {
+            if (playniteGame == null)
+                return false;
+
+            /*
+             * On vérifie plusieurs éléments que Playnite remplit
+             * pendant son traitement des métadonnées.
+             *
+             * Le nom est toujours présent puisque nous le fournissons
+             * lors de l'import, donc il n'est PAS utilisé seul.
+             */
+
+            bool hasLinks =
+                playniteGame.Links != null &&
+                playniteGame.Links.Count > 0;
+
+            bool hasDescription =
+                !string.IsNullOrWhiteSpace(
+                    playniteGame.Description
+                );
+
+            bool hasCover =
+                !string.IsNullOrWhiteSpace(
+                    playniteGame.CoverImage
+                );
+
+            bool hasBackground =
+                !string.IsNullOrWhiteSpace(
+                    playniteGame.BackgroundImage
+                );
+
+            /*
+             * PCGamingWiki est notre meilleur indicateur puisque le
+             * workflow précédent dépend explicitement de ce lien.
+             */
+            bool hasPcGamingWiki =
+                playniteGame.Links != null &&
+                playniteGame.Links.Any(
+                    link =>
+                        string.Equals(
+                            link.Name,
+                            "PCGamingWiki",
+                            StringComparison.OrdinalIgnoreCase
+                        ) &&
+                        !string.IsNullOrWhiteSpace(
+                            link.Url
+                        )
+                );
+
+            /*
+             * Si PCGamingWiki est déjà présent, on sait que le
+             * metadata provider a fait son travail.
+             */
+            if (hasPcGamingWiki)
+                return true;
+
+            /*
+             * Sinon on attend que plusieurs champs de métadonnées
+             * soient réellement remplis.
+             */
+            int metadataFields = 0;
+
+            if (hasDescription)
+                metadataFields++;
+
+            if (hasCover)
+                metadataFields++;
+
+            if (hasBackground)
+                metadataFields++;
+
+            if (hasLinks)
+                metadataFields++;
+
+            return metadataFields >= 2;
         }
 
         // ============================================================
@@ -797,20 +932,26 @@ namespace AutoImportPlugin
                         return;
                     }
 
-                    // =================================================
-                    // CRITICAL :
-                    //
-                    // On prépare les données post-import AVANT de
-                    // retourner les GameMetadata.
-                    //
-                    // MAIS on ne lance encore RIEN.
-                    // =================================================
-
                     string selectedController =
                         window.SelectedController;
 
                     bool enableHdr =
                         window.EnableHdrSupport;
+
+                    /*
+                     * IMPORTANT :
+                     *
+                     * On place les jeux dans la queue AVANT de
+                     * retourner les GameMetadata.
+                     *
+                     * MAIS :
+                     *
+                     * On NE démarre PAS le timer ici.
+                     *
+                     * On attend OnLibraryUpdated(), qui indique que
+                     * Playnite a réellement traité le résultat de
+                     * GetGames().
+                     */
 
                     lock (pendingImportLock)
                     {
@@ -829,10 +970,6 @@ namespace AutoImportPlugin
                                 continue;
                             }
 
-                            /*
-                             * Évite les doublons si Playnite provoque
-                             * plusieurs appels de bibliothèque.
-                             */
                             bool alreadyPending =
                                 pendingImportedGames.Any(
                                     x =>
@@ -869,7 +1006,10 @@ namespace AutoImportPlugin
                                         false,
 
                                     MetadataReady =
-                                        false
+                                        false,
+
+                                    MetadataStableChecks =
+                                        0
                                 }
                             );
 
@@ -878,14 +1018,6 @@ namespace AutoImportPlugin
                             );
                         }
                     }
-
-                    /*
-                     * On démarre le timer seulement maintenant.
-                     *
-                     * Il va attendre que Playnite ait réellement
-                     * ajouté les jeux dans sa base.
-                     */
-                    StartPostImportTimerIfNeeded();
 
                     // =================================================
                     // IGNORED GAMES
@@ -919,13 +1051,10 @@ namespace AutoImportPlugin
                         settings.EndEdit();
                     }
 
-                    // =================================================
-                    // IMPORTANT :
-                    //
-                    // C'est CETTE liste qui est retournée à Playnite.
-                    // On ne modifie pas les ScannedGameWrapper.
-                    // =================================================
-
+                    /*
+                     * CETTE LISTE est la seule chose retournée à
+                     * Playnite.
+                     */
                     finalSelection =
                         selectedGames
                             .Select(
