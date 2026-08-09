@@ -2,7 +2,6 @@ using Playnite.SDK;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using Playnite.SDK.Events;
-
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -24,12 +23,14 @@ namespace AutoImportPlugin
         private Process launcherProcess;
         private System.Threading.Timer launcherCheckTimer;
 
-        // ============================================================
-        // PATHS
-        // ============================================================
+        private System.Threading.Timer pendingImportTimer;
 
         private const string ReShadeDeployerPath =
             @"G:\Reshade\Reshade Deployer.exe";
+
+        // ============================================================
+        // DS4WINDOWS
+        // ============================================================
 
         private const string DS4WindowsPath =
             @"C:\Program Files (x86)\net8.0-windows7.0.Full\DS4Windows.exe";
@@ -52,13 +53,13 @@ namespace AutoImportPlugin
 
             public string Controller { get; set; }
 
-            public bool Ds4Updated { get; set; }
-
             public bool ReShadeStarted { get; set; }
+
+            public bool Ds4Updated { get; set; }
 
             public bool PcGamingWikiOpened { get; set; }
 
-            public int Checks { get; set; }
+            public bool MetadataReady { get; set; }
         }
 
         private readonly List<PendingImportedGame>
@@ -68,13 +69,15 @@ namespace AutoImportPlugin
         private readonly object pendingImportLock =
             new object();
 
-        private System.Threading.Timer pendingImportTimer;
-
         private bool postImportTimerRunning;
+
+        // ============================================================
+        // PCGAMINGWIKI
+        // ============================================================
 
         private readonly HashSet<Guid>
             openedPcGamingWikiGames =
-                new HashSet<Guid>();
+            new HashSet<Guid>();
 
         // ============================================================
         // ID
@@ -137,34 +140,31 @@ namespace AutoImportPlugin
         public override IEnumerable<GameMetadata> GetGames(
             LibraryGetGamesArgs args)
         {
+            logger.Info(
+                "AutoImport GetGames() called."
+            );
+
             /*
-             * IMPORTANT
+             * IMPORTANT:
              *
-             * Cette méthode doit rester le plus simple possible.
+             * GetGames() doit uniquement :
              *
-             * Playnite appelle GetGames(), puis récupère la liste
-             * retournée et effectue lui-même l'import dans sa base.
+             * 1. scanner
+             * 2. afficher la fenêtre
+             * 3. préparer la file post-import
+             * 4. retourner les GameMetadata
              *
-             * Aucune opération DS4 / ReShade / PCGamingWiki n'est
-             * effectuée ici.
+             * AUCUNE opération DS4/ReShade/PCGamingWiki n'est
+             * lancée ici.
+             *
+             * Playnite doit d'abord recevoir et importer les jeux.
              */
 
-            logger.Info(
-                "AutoImport: GetGames() called."
-            );
-
-            var games =
-                ScanAndSelectGames();
-
-            logger.Info(
-                $"AutoImport: GetGames() returning {games.Count} game(s) to Playnite."
-            );
-
-            return games;
+            return ScanAndSelectGames();
         }
 
         // ============================================================
-        // LAUNCHER MONITOR
+        // SURVEILLANCE DU LAUNCHER
         // ============================================================
 
         private void CheckLauncherProcess(object state)
@@ -182,17 +182,7 @@ namespace AutoImportPlugin
                     Application.Current.Dispatcher.BeginInvoke(
                         new Action(() =>
                         {
-                            try
-                            {
-                                ScanAndSelectGames();
-                            }
-                            catch (Exception ex)
-                            {
-                                logger.Error(
-                                    ex,
-                                    "Failed to scan games after launcher exit."
-                                );
-                            }
+                            ScanAndSelectGames();
                         })
                     );
 
@@ -220,7 +210,7 @@ namespace AutoImportPlugin
             {
                 logger.Warn(
                     ex,
-                    "Failed to monitor launcher process."
+                    "Failed to monitor launcher process"
                 );
             }
         }
@@ -235,27 +225,34 @@ namespace AutoImportPlugin
             base.OnLibraryUpdated(args);
 
             /*
-             * On ne déclenche rien directement.
+             * IMPORTANT:
              *
-             * Le timer vérifie indépendamment que le jeu est réellement
-             * présent dans la base Playnite.
+             * Cette méthode est appelée APRÈS que Playnite ait
+             * traité la liste retournée par GetGames().
+             *
+             * C'est donc ici que l'on commence le workflow
+             * post-import.
              */
 
             try
             {
+                logger.Info(
+                    "Playnite library updated. Checking pending imports."
+                );
+
                 StartPostImportTimerIfNeeded();
             }
             catch (Exception ex)
             {
                 logger.Error(
                     ex,
-                    "Failed to process library update."
+                    "Failed to process library update"
                 );
             }
         }
 
         // ============================================================
-        // START POST IMPORT TIMER
+        // POST IMPORT TIMER
         // ============================================================
 
         private void StartPostImportTimerIfNeeded()
@@ -263,7 +260,13 @@ namespace AutoImportPlugin
             lock (pendingImportLock)
             {
                 if (pendingImportedGames.Count == 0)
+                {
+                    logger.Info(
+                        "No pending imported games."
+                    );
+
                     return;
+                }
 
                 if (postImportTimerRunning)
                     return;
@@ -272,20 +275,20 @@ namespace AutoImportPlugin
             }
 
             logger.Info(
-                "AutoImport: starting post-import monitoring."
+                "Starting post-import verification timer."
             );
 
             pendingImportTimer =
                 new System.Threading.Timer(
                     ProcessPendingImports,
                     null,
-                    2000,
-                    2000
+                    1500,
+                    1500
                 );
         }
 
         // ============================================================
-        // TIMER CALLBACK
+        // PROCESS PENDING IMPORTS
         // ============================================================
 
         private void ProcessPendingImports(object state)
@@ -296,22 +299,23 @@ namespace AutoImportPlugin
                     return;
 
                 Application.Current.Dispatcher.BeginInvoke(
-                    new Action(
-                        ProcessPendingImportsOnUiThread
-                    )
+                    new Action(() =>
+                    {
+                        ProcessPendingImportsOnUiThread();
+                    })
                 );
             }
             catch (Exception ex)
             {
                 logger.Error(
                     ex,
-                    "Failed to dispatch post-import processing."
+                    "Failed to dispatch post-import processing"
                 );
             }
         }
 
         // ============================================================
-        // POST IMPORT - UI THREAD
+        // PROCESS PENDING IMPORTS - UI THREAD
         // ============================================================
 
         private void ProcessPendingImportsOnUiThread()
@@ -344,125 +348,36 @@ namespace AutoImportPlugin
                         continue;
                     }
 
-                    pending.Checks++;
-
                     string targetPath =
                         NormalizePath(
                             pending.ExecutablePath
                         );
-
-                    /*
-                     * ====================================================
-                     * ETAPE 1
-                     *
-                     * Attendre que Playnite ait réellement importé
-                     * le jeu dans sa base.
-                     * ====================================================
-                     */
 
                     var playniteGame =
                         FindGameByExecutablePath(
                             targetPath
                         );
 
+                    // =================================================
+                    // PLAYNITE N'A PAS ENCORE FINI
+                    // =================================================
+
                     if (playniteGame == null)
                     {
                         logger.Info(
-                            $"AutoImport: waiting for Playnite import: {pending.ExecutablePath}"
+                            $"Waiting for Playnite to finish importing: {pending.ExecutablePath}"
                         );
 
                         continue;
                     }
 
                     logger.Info(
-                        $"AutoImport: game imported by Playnite: {playniteGame.Name}"
+                        $"Game found in Playnite database: {playniteGame.Name}"
                     );
 
-                    /*
-                     * ====================================================
-                     * ETAPE 2
-                     *
-                     * Attendre les métadonnées.
-                     *
-                     * Le lien PCGamingWiki est notre indicateur fiable
-                     * que le traitement des métadonnées a avancé.
-                     *
-                     * IMPORTANT :
-                     *
-                     * On ne lance PAS encore DS4Windows / ReShade.
-                     * ====================================================
-                     */
-
-                    var pcGamingWikiLink =
-                        playniteGame.Links?
-                            .FirstOrDefault(
-                                link =>
-                                    string.Equals(
-                                        link.Name,
-                                        "PCGamingWiki",
-                                        StringComparison.OrdinalIgnoreCase
-                                    )
-                            );
-
-                    if (pcGamingWikiLink == null ||
-                        string.IsNullOrWhiteSpace(
-                            pcGamingWikiLink.Url))
-                    {
-                        logger.Info(
-                            $"AutoImport: game imported but metadata is not ready yet: {playniteGame.Name}"
-                        );
-
-                        continue;
-                    }
-
-                    logger.Info(
-                        $"AutoImport: metadata ready for: {playniteGame.Name}"
-                    );
-
-                    /*
-                     * ====================================================
-                     * ETAPE 3
-                     *
-                     * HDR
-                     * ====================================================
-                     */
-
-                    if (pending.EnableHdr)
-                    {
-                        try
-                        {
-                            if (!playniteGame.EnableSystemHdr)
-                            {
-                                playniteGame.EnableSystemHdr =
-                                    true;
-
-                                PlayniteApi.Database.Games.Update(
-                                    playniteGame
-                                );
-
-                                logger.Info(
-                                    $"AutoImport: enabled system HDR for {playniteGame.Name}"
-                                );
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.Error(
-                                ex,
-                                $"Failed to enable HDR for {playniteGame.Name}"
-                            );
-                        }
-
-                        pending.EnableHdr = false;
-                    }
-
-                    /*
-                     * ====================================================
-                     * ETAPE 4
-                     *
-                     * DS4WINDOWS
-                     * ====================================================
-                     */
+                    // =================================================
+                    // DS4WINDOWS
+                    // =================================================
 
                     if (!pending.Ds4Updated)
                     {
@@ -470,7 +385,7 @@ namespace AutoImportPlugin
                             pending.Controller))
                         {
                             logger.Info(
-                                $"AutoImport: updating DS4Windows for {playniteGame.Name}"
+                                $"Applying DS4Windows controller profile for: {playniteGame.Name}"
                             );
 
                             UpdateDS4WindowsProfile(
@@ -480,39 +395,89 @@ namespace AutoImportPlugin
                         }
 
                         pending.Ds4Updated = true;
+
+                        logger.Info(
+                            $"DS4Windows processing completed for: {playniteGame.Name}"
+                        );
                     }
 
-                    /*
-                     * ====================================================
-                     * ETAPE 5
-                     *
-                     * RESHADE
-                     * ====================================================
-                     */
+                    // =================================================
+                    // RESHADE
+                    // =================================================
 
                     if (!pending.ReShadeStarted)
                     {
-                        logger.Info(
-                            $"AutoImport: launching ReShade Deployer for {playniteGame.Name}"
-                        );
-
                         LaunchReShadeDeployer(
                             pending.ExecutablePath
                         );
 
                         pending.ReShadeStarted = true;
+
+                        logger.Info(
+                            $"ReShade processing started for: {playniteGame.Name}"
+                        );
                     }
 
-                    /*
-                     * ====================================================
-                     * ETAPE 6
-                     *
-                     * PCGAMINGWIKI
-                     * ====================================================
-                     */
+                    // =================================================
+                    // HDR
+                    // =================================================
+
+                    if (pending.EnableHdr)
+                    {
+                        if (!playniteGame.EnableSystemHdr)
+                        {
+                            playniteGame.EnableSystemHdr = true;
+
+                            PlayniteApi.Database.Games.Update(
+                                playniteGame
+                            );
+
+                            logger.Info(
+                                $"Enabled system HDR for imported game: {playniteGame.Name}"
+                            );
+                        }
+
+                        pending.EnableHdr = false;
+                    }
+
+                    // =================================================
+                    // METADATA / PCGAMINGWIKI
+                    // =================================================
 
                     if (!pending.PcGamingWikiOpened)
                     {
+                        var pcGamingWikiLink =
+                            playniteGame.Links?
+                                .FirstOrDefault(
+                                    link =>
+                                        string.Equals(
+                                            link.Name,
+                                            "PCGamingWiki",
+                                            StringComparison.OrdinalIgnoreCase
+                                        )
+                                );
+
+                        if (pcGamingWikiLink == null)
+                        {
+                            logger.Info(
+                                $"Waiting for metadata / PCGamingWiki link for: {playniteGame.Name}"
+                            );
+
+                            continue;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(
+                            pcGamingWikiLink.Url))
+                        {
+                            logger.Warn(
+                                $"PCGamingWiki link has no URL for: {playniteGame.Name}"
+                            );
+
+                            pending.PcGamingWikiOpened = true;
+
+                            continue;
+                        }
+
                         if (!openedPcGamingWikiGames.Contains(
                             playniteGame.Id))
                         {
@@ -524,8 +489,7 @@ namespace AutoImportPlugin
                                         FileName =
                                             pcGamingWikiLink.Url,
 
-                                        UseShellExecute =
-                                            true
+                                        UseShellExecute = true
                                     }
                                 );
 
@@ -534,38 +498,38 @@ namespace AutoImportPlugin
                                 );
 
                                 logger.Info(
-                                    $"AutoImport: opened PCGamingWiki for {playniteGame.Name}"
+                                    $"Opened PCGamingWiki page for: {playniteGame.Name}"
                                 );
                             }
                             catch (Exception ex)
                             {
                                 logger.Error(
                                     ex,
-                                    $"Failed to open PCGamingWiki for {playniteGame.Name}"
+                                    $"Failed to open PCGamingWiki for: {playniteGame.Name}"
                                 );
+
+                                continue;
                             }
                         }
 
                         pending.PcGamingWikiOpened = true;
                     }
 
-                    /*
-                     * ====================================================
-                     * FIN
-                     * ====================================================
-                     */
+                    // =================================================
+                    // FIN
+                    // =================================================
 
-                    if (!pending.EnableHdr &&
-                        pending.Ds4Updated &&
+                    if (pending.Ds4Updated &&
                         pending.ReShadeStarted &&
+                        !pending.EnableHdr &&
                         pending.PcGamingWikiOpened)
                     {
-                        logger.Info(
-                            $"AutoImport: post-import workflow completed for {playniteGame.Name}"
-                        );
-
                         RemovePendingGame(
                             pending
+                        );
+
+                        logger.Info(
+                            $"Post-import processing completed for: {playniteGame.Name}"
                         );
                     }
                 }
@@ -582,7 +546,7 @@ namespace AutoImportPlugin
             {
                 logger.Error(
                     ex,
-                    "Failed during post-import processing."
+                    "Failed during post-import processing"
                 );
             }
         }
@@ -607,7 +571,7 @@ namespace AutoImportPlugin
                             action =>
                                 action.Type ==
                                     GameActionType.File &&
-                                !string.IsNullOrWhiteSpace(
+                                !string.IsNullOrEmpty(
                                     action.Path
                                 ) &&
                                 NormalizePath(
@@ -632,7 +596,7 @@ namespace AutoImportPlugin
         }
 
         // ============================================================
-        // REMOVE PENDING
+        // REMOVE PENDING GAME
         // ============================================================
 
         private void RemovePendingGame(
@@ -670,7 +634,7 @@ namespace AutoImportPlugin
             }
 
             logger.Info(
-                "AutoImport: post-import monitoring stopped."
+                "Post-import verification timer stopped."
             );
         }
 
@@ -708,7 +672,7 @@ namespace AutoImportPlugin
                     if (!game.IsInstalled)
                         continue;
 
-                    if (!string.IsNullOrWhiteSpace(
+                    if (!string.IsNullOrEmpty(
                         game.InstallDirectory))
                     {
                         existingSet.Add(
@@ -725,7 +689,7 @@ namespace AutoImportPlugin
                         {
                             if (action.Type ==
                                     GameActionType.File &&
-                                !string.IsNullOrWhiteSpace(
+                                !string.IsNullOrEmpty(
                                     action.Path))
                             {
                                 existingSet.Add(
@@ -742,34 +706,33 @@ namespace AutoImportPlugin
             {
                 logger.Error(
                     ex,
-                    "Failed to build existing games set."
+                    "Failed to build existing games set"
                 );
+
+                return new HashSet<string>();
             }
 
             return existingSet;
         }
 
         // ============================================================
-        // NORMALIZE PATH
+        // PATH NORMALIZATION
         // ============================================================
 
         private string NormalizePath(
             string path)
         {
-            if (string.IsNullOrWhiteSpace(path))
+            if (string.IsNullOrEmpty(path))
                 return string.Empty;
 
             return path
+                .ToLowerInvariant()
                 .Trim()
-                .Replace(
-                    "/",
-                    "\\"
-                )
-                .ToLowerInvariant();
+                .Replace("/", "\\");
         }
 
         // ============================================================
-        // SCAN AND SELECT
+        // SCAN
         // ============================================================
 
         private List<GameMetadata>
@@ -813,21 +776,15 @@ namespace AutoImportPlugin
                 );
             }
 
-            if (allFoundGames.Count == 0)
-            {
-                logger.Info(
-                    "AutoImport: no new games found."
-                );
+            logger.Info(
+                $"AutoImport found {allFoundGames.Count} candidate executable(s)."
+            );
 
+            if (allFoundGames.Count == 0)
                 return new List<GameMetadata>();
-            }
 
             List<GameMetadata> finalSelection =
                 new List<GameMetadata>();
-
-            /*
-             * La fenêtre de sélection reste sur le thread UI.
-             */
 
             Application.Current.Dispatcher.Invoke(
                 () =>
@@ -843,10 +800,13 @@ namespace AutoImportPlugin
                             Application.Current.MainWindow;
                     }
 
-                    if (window.ShowDialog() != true)
+                    bool? result =
+                        window.ShowDialog();
+
+                    if (result != true)
                     {
                         logger.Info(
-                            "AutoImport: import cancelled by user."
+                            "Game selection window cancelled."
                         );
 
                         return;
@@ -858,12 +818,16 @@ namespace AutoImportPlugin
                     if (selectedGames == null ||
                         selectedGames.Count == 0)
                     {
-                        logger.Info(
-                            "AutoImport: no games selected."
+                        logger.Warn(
+                            "Import clicked but no games were selected."
                         );
 
                         return;
                     }
+
+                    logger.Info(
+                        $"User selected {selectedGames.Count} game(s) for import."
+                    );
 
                     string selectedController =
                         window.SelectedController;
@@ -871,19 +835,11 @@ namespace AutoImportPlugin
                     bool enableHdr =
                         window.EnableHdrSupport;
 
-                    /*
-                     * ====================================================
-                     * IMPORTANT
-                     *
-                     * On sauvegarde UNIQUEMENT le chemin de l'exécutable.
-                     *
-                     * On ne modifie absolument pas GameMetadata.
-                     * On ne modifie pas ScannedGameWrapper.
-                     *
-                     * Playnite va recevoir GameMetadata plus bas et
-                     * effectuer normalement son import.
-                     * ====================================================
-                     */
+                    // =================================================
+                    // PREPARE POST-IMPORT DATA ONLY
+                    //
+                    // NOTHING IS STARTED HERE.
+                    // =================================================
 
                     lock (pendingImportLock)
                     {
@@ -902,18 +858,15 @@ namespace AutoImportPlugin
                                 continue;
                             }
 
-                            string normalized =
-                                NormalizePath(
-                                    executablePath
-                                );
-
                             bool alreadyPending =
                                 pendingImportedGames.Any(
                                     x =>
                                         NormalizePath(
                                             x.ExecutablePath
                                         ) ==
-                                        normalized
+                                        NormalizePath(
+                                            executablePath
+                                        )
                                 );
 
                             if (alreadyPending)
@@ -931,31 +884,29 @@ namespace AutoImportPlugin
                                     Controller =
                                         selectedController,
 
-                                    Ds4Updated =
+                                    ReShadeStarted =
                                         false,
 
-                                    ReShadeStarted =
+                                    Ds4Updated =
                                         false,
 
                                     PcGamingWikiOpened =
                                         false,
 
-                                    Checks =
-                                        0
+                                    MetadataReady =
+                                        false
                                 }
                             );
 
                             logger.Info(
-                                $"AutoImport: queued {executablePath} for post-import processing."
+                                $"Queued post-import processing for: {executablePath}"
                             );
                         }
                     }
 
-                    /*
-                     * ====================================================
-                     * IGNORED GAMES
-                     * ====================================================
-                     */
+                    // =================================================
+                    // IGNORED GAMES
+                    // =================================================
 
                     var newlyIgnored =
                         allFoundGames
@@ -985,15 +936,14 @@ namespace AutoImportPlugin
                         settings.EndEdit();
                     }
 
-                    /*
-                     * ====================================================
-                     * RETOUR PLAYNITE
-                     *
-                     * C'est la seule chose importante ici.
-                     *
-                     * Les GameMetadata originaux sont retournés.
-                     * ====================================================
-                     */
+                    // =================================================
+                    // CRITICAL
+                    //
+                    // We return the GameMetadata to Playnite NOW.
+                    //
+                    // Post-import processing is started later from
+                    // OnLibraryUpdated().
+                    // =================================================
 
                     finalSelection =
                         selectedGames
@@ -1001,41 +951,19 @@ namespace AutoImportPlugin
                                 game =>
                                     game.GameData
                             )
-                            .Where(
-                                game =>
-                                    game != null
-                            )
                             .ToList();
 
                     logger.Info(
-                        $"AutoImport: prepared {finalSelection.Count} GameMetadata object(s) for Playnite."
+                        $"Returning {finalSelection.Count} GameMetadata item(s) to Playnite."
                     );
                 }
             );
-
-            /*
-             * ============================================================
-             * IMPORTANT
-             *
-             * On démarre le monitoring APRÈS avoir préparé la liste
-             * qui sera retournée à Playnite.
-             *
-             * Le timer ne fait encore aucune action.
-             * Il attend simplement que Playnite crée réellement le jeu
-             * puis que les métadonnées soient disponibles.
-             * ============================================================
-             */
-
-            if (finalSelection.Count > 0)
-            {
-                StartPostImportTimerIfNeeded();
-            }
 
             return finalSelection;
         }
 
         // ============================================================
-        // DS4WINDOWS UPDATE
+        // DS4WINDOWS - UPDATE
         // ============================================================
 
         private void UpdateDS4WindowsProfile(
@@ -1054,7 +982,7 @@ namespace AutoImportPlugin
                     selectedController))
                 {
                     logger.Info(
-                        "AutoImport: no controller selected."
+                        "No controller selected. DS4Windows profile was not modified."
                     );
 
                     return;
@@ -1080,22 +1008,31 @@ namespace AutoImportPlugin
                 {
                     case "PS4":
 
-                        controllerValue = "PS4";
-                        turnOff = false;
+                        controllerValue =
+                            "PS4";
+
+                        turnOff =
+                            false;
 
                         break;
 
                     case "XBOX":
 
-                        controllerValue = "xbox";
-                        turnOff = false;
+                        controllerValue =
+                            "xbox";
+
+                        turnOff =
+                            false;
 
                         break;
 
                     case "OFF":
 
-                        controllerValue = "(none)";
-                        turnOff = true;
+                        controllerValue =
+                            "(none)";
+
+                        turnOff =
+                            true;
 
                         break;
 
@@ -1107,6 +1044,10 @@ namespace AutoImportPlugin
 
                         return;
                 }
+
+                logger.Info(
+                    $"Updating DS4Windows: Controller1={controllerValue}, TurnOff={turnOff}"
+                );
 
                 XDocument document =
                     XDocument.Load(
@@ -1209,7 +1150,7 @@ namespace AutoImportPlugin
                     );
 
                     logger.Info(
-                        $"AutoImport: added DS4Windows profile for {executablePath}"
+                        $"Added DS4Windows Auto Profile for: {executablePath}"
                     );
                 }
                 else
@@ -1259,7 +1200,7 @@ namespace AutoImportPlugin
                     }
 
                     logger.Info(
-                        $"AutoImport: updated DS4Windows profile for {executablePath}"
+                        $"Updated DS4Windows Auto Profile for: {executablePath}"
                     );
                 }
 
@@ -1269,7 +1210,7 @@ namespace AutoImportPlugin
                 );
 
                 logger.Info(
-                    "AutoImport: DS4Windows Auto Profiles saved."
+                    $"Saved DS4Windows Auto Profiles: {AutoProfilesPath}"
                 );
 
                 RestartDS4Windows();
@@ -1278,13 +1219,13 @@ namespace AutoImportPlugin
             {
                 logger.Error(
                     ex,
-                    "Failed to update DS4Windows Auto Profiles.xml."
+                    "Failed to update DS4Windows Auto Profiles.xml"
                 );
             }
         }
 
         // ============================================================
-        // DS4WINDOWS RESTART
+        // DS4WINDOWS - RESTART
         // ============================================================
 
         private void RestartDS4Windows()
@@ -1292,7 +1233,7 @@ namespace AutoImportPlugin
             try
             {
                 logger.Info(
-                    "AutoImport: stopping DS4Windows."
+                    "Stopping DS4Windows..."
                 );
 
                 var killInfo =
@@ -1358,6 +1299,9 @@ namespace AutoImportPlugin
                     }
                 }
 
+                bool stillRunning =
+                    true;
+
                 for (int i = 0; i < 20; i++)
                 {
                     var processes =
@@ -1365,7 +1309,7 @@ namespace AutoImportPlugin
                             DS4WindowsProcessName
                         );
 
-                    bool stillRunning =
+                    stillRunning =
                         processes.Length > 0;
 
                     foreach (var process
@@ -1390,7 +1334,8 @@ namespace AutoImportPlugin
                 bool ds4StillRunning =
                     remainingProcesses.Length > 0;
 
-                foreach (var process
+                foreach (
+                    var process
                     in remainingProcesses)
                 {
                     process.Dispose();
@@ -1399,7 +1344,7 @@ namespace AutoImportPlugin
                 if (ds4StillRunning)
                 {
                     logger.Error(
-                        "AutoImport: DS4Windows is still running. Restart aborted."
+                        "DS4Windows is still running after taskkill. Aborting restart."
                     );
 
                     return;
@@ -1416,7 +1361,7 @@ namespace AutoImportPlugin
                 }
 
                 logger.Info(
-                    "AutoImport: starting DS4Windows."
+                    "Starting DS4Windows..."
                 );
 
                 Process.Start(
@@ -1436,7 +1381,7 @@ namespace AutoImportPlugin
                 );
 
                 logger.Info(
-                    "AutoImport: DS4Windows restarted."
+                    "DS4Windows restarted successfully."
                 );
             }
             catch (Exception ex)
@@ -1449,7 +1394,7 @@ namespace AutoImportPlugin
         }
 
         // ============================================================
-        // RESHADE
+        // RESHADE DEPLOYER
         // ============================================================
 
         private void LaunchReShadeDeployer(
@@ -1479,7 +1424,7 @@ namespace AutoImportPlugin
                     return;
                 }
 
-                Process.Start(
+                var startInfo =
                     new ProcessStartInfo
                     {
                         FileName =
@@ -1490,24 +1435,27 @@ namespace AutoImportPlugin
 
                         UseShellExecute =
                             true
-                    }
+                    };
+
+                Process.Start(
+                    startInfo
                 );
 
                 logger.Info(
-                    $"AutoImport: ReShade Deployer started for {executablePath}"
+                    $"Started ReShade Deployer for: {executablePath}"
                 );
             }
             catch (Exception ex)
             {
                 logger.Error(
                     ex,
-                    $"Failed to start ReShade Deployer for {executablePath}"
+                    $"Failed to start ReShade Deployer for: {executablePath}"
                 );
             }
         }
 
         // ============================================================
-        // SCAN FOLDERS
+        // RECURSIVE FOLDER SCAN
         // ============================================================
 
         private IEnumerable<ScannedGameWrapper>
@@ -1554,7 +1502,7 @@ namespace AutoImportPlugin
         }
 
         // ============================================================
-        // FIND EXECUTABLES
+        // FIND EXE
         // ============================================================
 
         private IEnumerable<ScannedGameWrapper>
@@ -1731,7 +1679,7 @@ namespace AutoImportPlugin
         }
 
         // ============================================================
-        // GAME NAME VALIDATION
+        // VALID GAME NAME
         // ============================================================
 
         private bool IsValidGameName(
@@ -1998,7 +1946,7 @@ namespace AutoImportPlugin
             string fileName =
                 Path.GetFileName(
                     path
-                ).ToLowerInvariant();
+                ).ToLower();
 
             return !(
                 fileName.Contains("uninstall") ||
