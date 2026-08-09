@@ -10,7 +10,7 @@ namespace AutoImportPlugin
         private List<ScannedGameWrapper> _games;
 
         // ============================================================
-        // GAMES SELECTION
+        // SELECTED GAMES
         // ============================================================
 
         public List<ScannedGameWrapper> SelectedGames
@@ -39,11 +39,12 @@ namespace AutoImportPlugin
         // CONTROLLER
         // ============================================================
 
-        public string ControllerSelection
+        public string SelectedController
         {
             get
             {
-                if (CmbController.SelectedItem is ComboBoxItem item)
+                if (CmbController.SelectedItem
+                    is ComboBoxItem item)
                 {
                     return item.Content?.ToString() ?? "OFF";
                 }
@@ -65,8 +66,9 @@ namespace AutoImportPlugin
 
             GridGames.ItemsSource = _games;
 
-            // OFF par défaut
-            CmbController.SelectedIndex = 2;
+            // Valeur par défaut :
+            // PS4
+            CmbController.SelectedIndex = 0;
         }
 
         // ============================================================
