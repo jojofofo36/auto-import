@@ -1,12 +1,17 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace AutoImportPlugin
 {
     public partial class GameSelectionWindow : Window
     {
         private List<ScannedGameWrapper> _games;
+
+        // ============================================================
+        // GAMES SELECTION
+        // ============================================================
 
         public List<ScannedGameWrapper> SelectedGames
         {
@@ -18,6 +23,10 @@ namespace AutoImportPlugin
             }
         }
 
+        // ============================================================
+        // HDR
+        // ============================================================
+
         public bool EnableHdrSupport
         {
             get
@@ -26,35 +35,59 @@ namespace AutoImportPlugin
             }
         }
 
-        public string ControllerProfile
+        // ============================================================
+        // CONTROLLER
+        // ============================================================
+
+        public string ControllerSelection
         {
             get
             {
                 if (CmbController.SelectedItem is ComboBoxItem item)
                 {
-                    return item.Content?.ToString() ?? "PS4";
+                    return item.Content?.ToString() ?? "OFF";
                 }
 
-                return "PS4";
+                return "OFF";
             }
         }
 
-        public GameSelectionWindow(List<ScannedGameWrapper> foundGames)
+        // ============================================================
+        // CONSTRUCTOR
+        // ============================================================
+
+        public GameSelectionWindow(
+            List<ScannedGameWrapper> foundGames)
         {
             InitializeComponent();
 
             _games = foundGames;
 
             GridGames.ItemsSource = _games;
+
+            // OFF par défaut
+            CmbController.SelectedIndex = 2;
         }
 
-        private void BtnImport_Click(object sender, RoutedEventArgs e)
+        // ============================================================
+        // IMPORT
+        // ============================================================
+
+        private void BtnImport_Click(
+            object sender,
+            RoutedEventArgs e)
         {
             DialogResult = true;
             Close();
         }
 
-        private void BtnCancel_Click(object sender, RoutedEventArgs e)
+        // ============================================================
+        // CANCEL
+        // ============================================================
+
+        private void BtnCancel_Click(
+            object sender,
+            RoutedEventArgs e)
         {
             DialogResult = false;
             Close();
