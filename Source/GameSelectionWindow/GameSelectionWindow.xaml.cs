@@ -7,27 +7,17 @@ namespace AutoImportPlugin
 {
     public partial class GameSelectionWindow : Window
     {
-        private List<ScannedGameWrapper> _games;
-
-        // ============================================================
-        // SELECTED GAMES
-        // ============================================================
+        private readonly List<ScannedGameWrapper> _games;
 
         public List<ScannedGameWrapper> SelectedGames
         {
             get
             {
                 return _games
-                    .Where(game =>
-                        game != null &&
-                        game.IsSelected)
+                    .Where(x => x != null && x.IsSelected)
                     .ToList();
             }
         }
-
-        // ============================================================
-        // HDR
-        // ============================================================
 
         public bool EnableHdrSupport
         {
@@ -36,10 +26,6 @@ namespace AutoImportPlugin
                 return ChkEnableHdr.IsChecked == true;
             }
         }
-
-        // ============================================================
-        // CONTROLLER
-        // ============================================================
 
         public string SelectedController
         {
@@ -55,10 +41,6 @@ namespace AutoImportPlugin
             }
         }
 
-        // ============================================================
-        // CONSTRUCTOR
-        // ============================================================
-
         public GameSelectionWindow(
             List<ScannedGameWrapper> foundGames)
         {
@@ -68,23 +50,17 @@ namespace AutoImportPlugin
                 foundGames ??
                 new List<ScannedGameWrapper>();
 
-            GridGames.ItemsSource =
-                _games;
+            GridGames.ItemsSource = _games;
 
-            CmbController.SelectedIndex =
-                0;
+            CmbController.SelectedIndex = 0;
         }
-
-        // ============================================================
-        // IMPORT
-        // ============================================================
 
         private void BtnImport_Click(
             object sender,
             RoutedEventArgs e)
         {
             /*
-             * Force la DataGrid à terminer toute éventuelle édition
+             * On force le DataGrid à terminer l'édition éventuelle
              * avant de lire IsSelected.
              */
 
@@ -99,7 +75,9 @@ namespace AutoImportPlugin
             );
 
             var selected =
-                SelectedGames;
+                _games
+                    .Where(x => x != null && x.IsSelected)
+                    .ToList();
 
             if (selected.Count == 0)
             {
@@ -115,10 +93,6 @@ namespace AutoImportPlugin
 
             DialogResult = true;
         }
-
-        // ============================================================
-        // CANCEL
-        // ============================================================
 
         private void BtnCancel_Click(
             object sender,
