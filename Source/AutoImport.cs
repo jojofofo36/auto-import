@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Text.RegularExpressions;
+using System.Xml;
 
 namespace AutoImportPlugin
 {
@@ -20,7 +21,21 @@ namespace AutoImportPlugin
         private Process launcherProcess;
         private System.Threading.Timer launcherCheckTimer;
 
-        private const string ReShadeDeployerPath = @"G:\Reshade\Reshade Deployer.exe";
+        private const string ReShadeDeployerPath =
+            @"G:\Reshade\Reshade Deployer.exe";
+
+        // ============================================================
+        // DS4WINDOWS
+        // ============================================================
+
+        private const string DS4WindowsPath =
+            @"C:\Program Files (x86)\net8.0-windows7.0.Full\DS4Windows.exe";
+
+        private const string DS4WindowsAutoProfilesPath =
+            @"C:\Program Files (x86)\net8.0-windows7.0.Full\Auto Profiles.xml";
+
+        // Nom Windows en dur comme demandé.
+        private const string WindowsUserName = "Hugo";
 
         // Chemin de l'exécutable du jeu pour lequel le HDR doit être activé
         private string pendingHdrExecutablePath;
@@ -79,7 +94,6 @@ namespace AutoImportPlugin
         {
             try
             {
-                // Si on surveille déjà un launcher, vérifier s'il est encore actif
                 if (launcherProcess != null)
                 {
                     if (!launcherProcess.HasExited)
@@ -88,8 +102,6 @@ namespace AutoImportPlugin
                     launcherProcess.Dispose();
                     launcherProcess = null;
 
-                    // Le launcher vient de se fermer :
-                    // déclencher automatiquement le scan.
                     Application.Current.Dispatcher.BeginInvoke(
                         new Action(() =>
                         {
@@ -100,11 +112,8 @@ namespace AutoImportPlugin
                     return;
                 }
 
-                // ========================================================
-                // CHANGE "launcher" ICI SI TON EXE A UN AUTRE NOM
-                // ========================================================
-
-                var processes = Process.GetProcessesByName("launcher");
+                var processes =
+                    Process.GetProcessesByName("launcher");
 
                 if (processes.Length > 0)
                 {
@@ -150,11 +159,12 @@ namespace AutoImportPlugin
                         if (game.GameActions == null)
                             continue;
 
-                        bool isTargetGame = game.GameActions.Any(action =>
-                            action.Type == GameActionType.File &&
-                            !string.IsNullOrEmpty(action.Path) &&
-                            NormalizePath(action.Path) == targetPath
-                        );
+                        bool isTargetGame =
+                            game.GameActions.Any(action =>
+                                action.Type == GameActionType.File &&
+                                !string.IsNullOrEmpty(action.Path) &&
+                                NormalizePath(action.Path) == targetPath
+                            );
 
                         if (!isTargetGame)
                             continue;
@@ -190,25 +200,22 @@ namespace AutoImportPlugin
                         if (game.GameActions == null)
                             continue;
 
-                        bool isTargetGame = game.GameActions.Any(action =>
-                            action.Type == GameActionType.File &&
-                            !string.IsNullOrEmpty(action.Path) &&
-                            NormalizePath(action.Path) == targetPath
-                        );
+                        bool isTargetGame =
+                            game.GameActions.Any(action =>
+                                action.Type == GameActionType.File &&
+                                !string.IsNullOrEmpty(action.Path) &&
+                                NormalizePath(action.Path) == targetPath
+                            );
 
                         if (!isTargetGame)
                             continue;
 
-                        // Si le lien a déjà été ouvert pour ce jeu,
-                        // on ne fait plus rien.
                         if (openedPcGamingWikiGames.Contains(game.Id))
                         {
                             pendingMetadataExecutablePath = null;
                             break;
                         }
 
-                        // Cherche uniquement le lien dont le nom est
-                        // "PCGamingWiki".
                         var pcGamingWikiLink = game.Links?
                             .FirstOrDefault(link =>
                                 string.Equals(
@@ -218,7 +225,6 @@ namespace AutoImportPlugin
                                 )
                             );
 
-                        // Le lien n'est pas encore arrivé.
                         if (pcGamingWikiLink == null)
                         {
                             logger.Info(
@@ -249,7 +255,9 @@ namespace AutoImportPlugin
                             Process.Start(
                                 new ProcessStartInfo
                                 {
-                                    FileName = pcGamingWikiLink.Url,
+                                    FileName =
+                                        pcGamingWikiLink.Url,
+
                                     UseShellExecute = true
                                 }
                             );
@@ -470,6 +478,18 @@ namespace AutoImportPlugin
                     }
 
                     // ====================================================
+                    // DS4WINDOWS AUTO PROFILE
+                    // ====================================================
+
+                    if (selectedGames.Count > 0)
+                    {
+                        UpdateDS4WindowsProfiles(
+                            selectedGames,
+                            window.ControllerSelection
+                        );
+                    }
+
+                    // ====================================================
                     // RESHADE DEPLOYER
                     // ====================================================
 
@@ -509,6 +529,407 @@ namespace AutoImportPlugin
             });
 
             return finalSelection;
+        }
+
+        // ============================================================
+        // DS4WINDOWS AUTO PROFILES
+        // ============================================================
+
+        private void UpdateDS4WindowsProfiles(
+            List<ScannedGameWrapper> selectedGames,
+            string controllerSelection)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(controllerSelection))
+                {
+                    logger.Warn(
+                        "No DS4Windows controller selection was provided."
+                    );
+
+                    return;
+                }
+
+                if (!File.Exists(DS4WindowsAutoProfilesPath))
+                {
+                    logger.Warn(
+                        $"DS4Windows Auto Profiles.xml not found: {DS4WindowsAutoProfilesPath}"
+                    );
+
+                    return;
+                }
+
+                // ========================================================
+                // NORMALISATION DU CHOIX
+                // ========================================================
+
+                string controllerValue;
+                bool turnOff;
+
+                switch (controllerSelection.ToUpperInvariant())
+                {
+                    case "PS4":
+                        controllerValue = "PS4";
+                        turnOff = false;
+                        break;
+
+                    case "XBOX":
+                        controllerValue = "xbox";
+                        turnOff = false;
+                        break;
+
+                    case "OFF":
+                        controllerValue = "(none)";
+                        turnOff = true;
+                        break;
+
+                    default:
+                        logger.Warn(
+                            $"Unknown DS4Windows controller selection: {controllerSelection}"
+                        );
+
+                        return;
+                }
+
+                // ========================================================
+                // DS4WINDOWS DOIT ÊTRE FERME AVANT MODIFICATION
+                // ========================================================
+
+                StopDS4Windows();
+
+                // Petite sécurité pour laisser le processus disparaître.
+                System.Threading.Thread.Sleep(500);
+
+                // ========================================================
+                // CHARGEMENT DU XML
+                // ========================================================
+
+                var xml =
+                    new XmlDocument();
+
+                xml.PreserveWhitespace = false;
+
+                xml.Load(
+                    DS4WindowsAutoProfilesPath
+                );
+
+                XmlElement programs =
+                    xml.DocumentElement;
+
+                if (programs == null ||
+                    programs.Name != "Programs")
+                {
+                    logger.Warn(
+                        "Invalid DS4Windows Auto Profiles.xml: missing <Programs> root."
+                    );
+
+                    RestartDS4Windows();
+
+                    return;
+                }
+
+                // ========================================================
+                // AJOUT / MISE A JOUR DES JEUX
+                // ========================================================
+
+                foreach (var scannedGame in selectedGames)
+                {
+                    if (scannedGame == null)
+                        continue;
+
+                    string executablePath =
+                        scannedGame.ExecutablePath;
+
+                    if (string.IsNullOrWhiteSpace(
+                        executablePath))
+                    {
+                        continue;
+                    }
+
+                    string normalizedTarget =
+                        NormalizePath(executablePath);
+
+                    XmlElement existingProgram = null;
+
+                    foreach (XmlNode node in programs.ChildNodes)
+                    {
+                        if (node is not XmlElement program)
+                            continue;
+
+                        if (program.Name != "Program")
+                            continue;
+
+                        string path =
+                            program.GetAttribute("path");
+
+                        if (NormalizePath(path) ==
+                            normalizedTarget)
+                        {
+                            existingProgram = program;
+                            break;
+                        }
+                    }
+
+                    XmlElement programElement;
+
+                    if (existingProgram != null)
+                    {
+                        programElement =
+                            existingProgram;
+
+                        logger.Info(
+                            $"Updating existing DS4Windows profile for: {executablePath}"
+                        );
+                    }
+                    else
+                    {
+                        programElement =
+                            xml.CreateElement("Program");
+
+                        programElement.SetAttribute(
+                            "path",
+                            executablePath
+                        );
+
+                        programElement.SetAttribute(
+                            "title",
+                            ""
+                        );
+
+                        programs.AppendChild(
+                            programElement
+                        );
+
+                        logger.Info(
+                            $"Adding new DS4Windows profile for: {executablePath}"
+                        );
+                    }
+
+                    // ====================================================
+                    // CONTROLLER 1
+                    // ====================================================
+
+                    SetXmlElementValue(
+                        xml,
+                        programElement,
+                        "Controller1",
+                        controllerValue
+                    );
+
+                    // ====================================================
+                    // CONTROLLERS 2-8
+                    // ====================================================
+
+                    for (int i = 2; i <= 8; i++)
+                    {
+                        SetXmlElementValue(
+                            xml,
+                            programElement,
+                            $"Controller{i}",
+                            "(none)"
+                        );
+                    }
+
+                    // ====================================================
+                    // TURN OFF
+                    // ====================================================
+
+                    SetXmlElementValue(
+                        xml,
+                        programElement,
+                        "TurnOff",
+                        turnOff ? "True" : "False"
+                    );
+                }
+
+                // ========================================================
+                // SAUVEGARDE
+                // ========================================================
+
+                var settings =
+                    new XmlWriterSettings
+                    {
+                        Indent = true,
+                        IndentChars = "  ",
+                        NewLineChars = Environment.NewLine,
+                        NewLineHandling =
+                            NewLineHandling.Entitize,
+                        OmitXmlDeclaration = false
+                    };
+
+                using (var writer =
+                    XmlWriter.Create(
+                        DS4WindowsAutoProfilesPath,
+                        settings))
+                {
+                    xml.Save(writer);
+                }
+
+                logger.Info(
+                    $"DS4Windows Auto Profiles.xml updated successfully for user {WindowsUserName}."
+                );
+
+                // ========================================================
+                // RELANCE DS4WINDOWS
+                // ========================================================
+
+                RestartDS4Windows();
+            }
+            catch (Exception ex)
+            {
+                logger.Error(
+                    ex,
+                    "Failed to update DS4Windows Auto Profiles.xml"
+                );
+
+                // Même en cas d'erreur, on essaye de remettre
+                // DS4Windows en fonctionnement.
+                try
+                {
+                    RestartDS4Windows();
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        // ============================================================
+        // SET XML ELEMENT VALUE
+        // ============================================================
+
+        private void SetXmlElementValue(
+            XmlDocument xml,
+            XmlElement parent,
+            string elementName,
+            string value)
+        {
+            XmlElement element =
+                null;
+
+            foreach (XmlNode node in parent.ChildNodes)
+            {
+                if (node is XmlElement child &&
+                    child.Name == elementName)
+                {
+                    element = child;
+                    break;
+                }
+            }
+
+            if (element == null)
+            {
+                element =
+                    xml.CreateElement(elementName);
+
+                parent.AppendChild(element);
+            }
+
+            element.InnerText = value;
+        }
+
+        // ============================================================
+        // STOP DS4WINDOWS
+        // ============================================================
+
+        private void StopDS4Windows()
+        {
+            try
+            {
+                var processes =
+                    Process.GetProcessesByName(
+                        "DS4Windows"
+                    );
+
+                if (processes.Length == 0)
+                {
+                    logger.Info(
+                        "DS4Windows is not currently running."
+                    );
+
+                    return;
+                }
+
+                foreach (var process in processes)
+                {
+                    try
+                    {
+                        logger.Info(
+                            $"Stopping DS4Windows process PID {process.Id}."
+                        );
+
+                        process.Kill();
+
+                        process.WaitForExit(5000);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Warn(
+                            ex,
+                            $"Failed to stop DS4Windows process PID {process.Id}."
+                        );
+                    }
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.Warn(
+                    ex,
+                    "Failed while stopping DS4Windows."
+                );
+            }
+        }
+
+        // ============================================================
+        // RESTART DS4WINDOWS
+        // ============================================================
+
+        private void RestartDS4Windows()
+        {
+            try
+            {
+                if (!File.Exists(DS4WindowsPath))
+                {
+                    logger.Warn(
+                        $"DS4Windows executable not found: {DS4WindowsPath}"
+                    );
+
+                    return;
+                }
+
+                var startInfo =
+                    new ProcessStartInfo
+                    {
+                        FileName =
+                            DS4WindowsPath,
+
+                        WorkingDirectory =
+                            Path.GetDirectoryName(
+                                DS4WindowsPath
+                            ),
+
+                        UseShellExecute = true
+                    };
+
+                Process.Start(
+                    startInfo
+                );
+
+                logger.Info(
+                    $"DS4Windows restarted successfully for user {WindowsUserName}."
+                );
+            }
+            catch (Exception ex)
+            {
+                logger.Error(
+                    ex,
+                    "Failed to restart DS4Windows."
+                );
+            }
         }
 
         // ============================================================
@@ -772,8 +1193,6 @@ namespace AutoImportPlugin
                 return cleanFolderName;
             }
 
-            // Aucun fallback vers le nom de l'EXE.
-            // On garde au minimum le nom original du dossier.
             return folderName.Trim();
         }
 
@@ -834,12 +1253,10 @@ namespace AutoImportPlugin
 
             string clean = filename.Trim();
 
-            // Remplace les séparateurs courants par des espaces.
             clean = clean
                 .Replace('.', ' ')
                 .Replace('_', ' ');
 
-            // Supprime les informations entre crochets / parenthèses.
             clean = Regex.Replace(
                 clean,
                 @"\[.*?\]|\(.*?\)",
@@ -847,7 +1264,6 @@ namespace AutoImportPlugin
                 RegexOptions.IgnoreCase
             );
 
-            // Versions et informations techniques inutiles.
             string junkPattern =
                 @"\bv?\d+(\.\d+)+\b" +
                 @"|\brepack\b" +
@@ -865,7 +1281,6 @@ namespace AutoImportPlugin
                 RegexOptions.IgnoreCase
             );
 
-            // Normalisation des différentes écritures courantes.
             clean = Regex.Replace(
                 clean,
                 @"\bdirectors\s+cut\b",
@@ -915,7 +1330,6 @@ namespace AutoImportPlugin
                 RegexOptions.IgnoreCase
             );
 
-            // Nettoyage des espaces.
             clean = Regex.Replace(
                 clean,
                 @"\s+",
@@ -925,10 +1339,6 @@ namespace AutoImportPlugin
             if (string.IsNullOrWhiteSpace(clean))
                 return string.Empty;
 
-            // Capitalisation douce :
-            // on conserve les mots déjà contenant des majuscules
-            // internes et on normalise surtout les noms entièrement
-            // en majuscules provenant des dossiers.
             if (clean == clean.ToUpperInvariant())
             {
                 clean = ToTitleCasePreservingSpecialWords(
@@ -999,7 +1409,6 @@ namespace AutoImportPlugin
                     words
                 );
 
-            // Réapplique les formes spéciales.
             result = Regex.Replace(
                 result,
                 @"\bDirectors\s+Cut\b",
