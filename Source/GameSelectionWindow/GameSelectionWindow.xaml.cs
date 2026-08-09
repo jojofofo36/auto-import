@@ -26,6 +26,19 @@ namespace AutoImportPlugin
             }
         }
 
+        public string ControllerProfile
+        {
+            get
+            {
+                if (CmbController.SelectedItem is ComboBoxItem item)
+                {
+                    return item.Content?.ToString() ?? "PS4";
+                }
+
+                return "PS4";
+            }
+        }
+
         public GameSelectionWindow(List<ScannedGameWrapper> foundGames)
         {
             InitializeComponent();
