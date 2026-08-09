@@ -50,6 +50,15 @@
       <Setter Property="VerticalAlignment" Value="Center"/>
     </Style>
 
+    <Style TargetType="ComboBox">
+      <Setter Property="Background" Value="#333333"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderBrush" Value="#454545"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Height" Value="28"/>
+    </Style>
+
   </Window.Resources>
 
   <Grid Margin="15">
@@ -60,12 +69,23 @@
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <StackPanel Grid.Row="0" Margin="0,0,0,15">
+    <!-- ========================================================= -->
+    <!-- HEADER -->
+    <!-- ========================================================= -->
+
+    <StackPanel Grid.Row="0"
+                Margin="0,0,0,15">
+
       <TextBlock Text="Select 'Import' to add to library. Select 'Ignore' to block from future scans."
                  FontSize="14"
                  Foreground="#AAAAAA"
                  Margin="0,5,0,0"/>
+
     </StackPanel>
+
+    <!-- ========================================================= -->
+    <!-- GAMES -->
+    <!-- ========================================================= -->
 
     <DataGrid x:Name="GridGames"
               Grid.Row="1"
@@ -123,26 +143,50 @@
 
       <DataGrid.Columns>
 
-        <DataGridTemplateColumn Header="Import" Width="60">
+        <!-- IMPORT -->
+
+        <DataGridTemplateColumn Header="Import"
+                                Width="60">
+
           <DataGridTemplateColumn.CellTemplate>
+
             <DataTemplate>
-              <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+
+              <CheckBox IsChecked="{Binding IsSelected,
+                                            UpdateSourceTrigger=PropertyChanged}"/>
+
             </DataTemplate>
+
           </DataGridTemplateColumn.CellTemplate>
+
         </DataGridTemplateColumn>
 
-        <DataGridTemplateColumn Header="Ignore" Width="60">
+        <!-- IGNORE -->
+
+        <DataGridTemplateColumn Header="Ignore"
+                                Width="60">
+
           <DataGridTemplateColumn.CellTemplate>
+
             <DataTemplate>
-              <CheckBox IsChecked="{Binding IsIgnored, UpdateSourceTrigger=PropertyChanged}" />
+
+              <CheckBox IsChecked="{Binding IsIgnored,
+                                            UpdateSourceTrigger=PropertyChanged}"/>
+
             </DataTemplate>
+
           </DataGridTemplateColumn.CellTemplate>
+
         </DataGridTemplateColumn>
+
+        <!-- NAME -->
 
         <DataGridTextColumn Binding="{Binding Name}"
                             Header="Name"
                             Width="300"
                             IsReadOnly="True"/>
+
+        <!-- PATH -->
 
         <DataGridTextColumn Binding="{Binding ExecutablePath}"
                             Header="Executable Path"
@@ -153,11 +197,18 @@
 
     </DataGrid>
 
-    <Grid Grid.Row="2" Margin="0,15,0,0">
+    <!-- ========================================================= -->
+    <!-- BOTTOM BAR -->
+    <!-- ========================================================= -->
+
+    <Grid Grid.Row="2"
+          Margin="0,15,0,0">
 
       <StackPanel Orientation="Horizontal"
                   HorizontalAlignment="Left"
                   VerticalAlignment="Center">
+
+        <!-- HDR -->
 
         <CheckBox x:Name="ChkEnableHdr"
                   Content="Enable HDR support"
@@ -168,7 +219,9 @@
                   FontSize="13"
                   Margin="0,0,20,0"/>
 
-        <TextBlock Text="Controller:"
+        <!-- CONTROLLER -->
+
+        <TextBlock Text="Controller :"
                    VerticalAlignment="Center"
                    Foreground="#DDDDDD"
                    FontSize="13"
@@ -176,17 +229,20 @@
 
         <ComboBox x:Name="CmbController"
                   Width="100"
-                  Height="26"
                   SelectedIndex="0"
-                  VerticalContentAlignment="Center">
+                  VerticalAlignment="Center">
 
           <ComboBoxItem Content="PS4"/>
+
           <ComboBoxItem Content="XBOX"/>
+
           <ComboBoxItem Content="OFF"/>
 
         </ComboBox>
 
       </StackPanel>
+
+      <!-- BUTTONS -->
 
       <StackPanel Orientation="Horizontal"
                   HorizontalAlignment="Right">
