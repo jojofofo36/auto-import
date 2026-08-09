@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Playnite.SDK.Models;
 
@@ -6,55 +6,94 @@ namespace AutoImportPlugin
 {
     public class ScannedGameWrapper : INotifyPropertyChanged
     {
-        private bool isSelected = false;
+        private bool isSelected;
+
         public bool IsSelected
         {
             get => isSelected;
+
             set
             {
-                if (isSelected != value)
-                {
-                    isSelected = value;
-                    OnPropertyChanged();
+                if (isSelected == value)
+                    return;
 
-                    if (isSelected) IsIgnored = false;
+                isSelected = value;
+
+                OnPropertyChanged();
+
+                if (isSelected)
+                {
+                    IsIgnored = false;
                 }
             }
         }
 
-        private bool isIgnored = false;
+        private bool isIgnored;
+
         public bool IsIgnored
         {
             get => isIgnored;
+
             set
             {
-                if (isIgnored != value)
-                {
-                    isIgnored = value;
-                    OnPropertyChanged();
+                if (isIgnored == value)
+                    return;
 
-                    if (isIgnored) IsSelected = false;
+                isIgnored = value;
+
+                OnPropertyChanged();
+
+                if (isIgnored)
+                {
+                    IsSelected = false;
                 }
             }
         }
 
-        public GameMetadata GameData { get; set; }
-        public string Name => GameData?.Name;
+        public GameMetadata GameData
+        {
+            get;
+            set;
+        }
+
+        public string Name
+        {
+            get
+            {
+                return GameData?.Name;
+            }
+        }
 
         public string ExecutablePath
         {
             get
             {
-                if (GameData?.GameActions != null && GameData.GameActions.Count > 0)
-                    return GameData.GameActions[0].Path;
-                return "Unknown Path";
+                if (GameData?.GameActions != null)
+                {
+                    foreach (var action in GameData.GameActions)
+                    {
+                        if (action != null &&
+                            !string.IsNullOrWhiteSpace(
+                                action.Path))
+                        {
+                            return action.Path;
+                        }
+                    }
+                }
+
+                return string.Empty;
             }
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
-        protected void OnPropertyChanged([CallerMemberName] string name = null)
+
+        protected void OnPropertyChanged(
+            [CallerMemberName] string name = null)
         {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+            PropertyChanged?.Invoke(
+                this,
+                new PropertyChangedEventArgs(name)
+            );
         }
     }
 }
