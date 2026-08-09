@@ -121,7 +121,7 @@ namespace AutoImportPlugin
                 }
 
                 // ========================================================
-                // CHANGE "launcher" ICI SI TON EXE A UN AUTRE NOM
+                // CHANGE "Project GLD" ICI SI TON EXE A UN AUTRE NOM
                 // ========================================================
 
                 var processes =
@@ -418,8 +418,7 @@ namespace AutoImportPlugin
 
             if (settings.Settings.BlockedPaths != null)
             {
-                foreach (var path in
-                    settings.Settings.BlockedPaths)
+                foreach (var path in settings.Settings.BlockedPaths)
                 {
                     blockedSet.Add(
                         NormalizePath(path)
@@ -451,6 +450,21 @@ namespace AutoImportPlugin
             List<GameMetadata> finalSelection =
                 new List<GameMetadata>();
 
+            // ========================================================
+            // DONNÉES UTILISÉES POUR LES ACTIONS DIFFÉRÉES
+            // ========================================================
+
+            List<ScannedGameWrapper> selectedGamesForActions =
+                new List<ScannedGameWrapper>();
+
+            string selectedController = null;
+
+            bool enableHdr = false;
+
+            // ========================================================
+            // FENÊTRE DE SÉLECTION
+            // ========================================================
+
             Application.Current.Dispatcher.Invoke(() =>
             {
                 var window =
@@ -464,108 +478,166 @@ namespace AutoImportPlugin
                         Application.Current.MainWindow;
                 }
 
-                if (window.ShowDialog() == true)
+                if (window.ShowDialog() != true)
+                    return;
+
+                // ====================================================
+                // JEUX SÉLECTIONNÉS
+                // ====================================================
+
+                var selectedGames =
+                    window.SelectedGames;
+
+                if (selectedGames == null ||
+                    selectedGames.Count == 0)
                 {
-                    var selectedGames =
-                        window.SelectedGames;
+                    return;
+                }
 
-                    finalSelection =
-                        selectedGames
-                            .Select(game => game.GameData)
-                            .ToList();
+                // IMPORTANT :
+                // Préparer immédiatement les GameMetadata pour
+                // que Playnite puisse procéder à l'import.
+                finalSelection =
+                    selectedGames
+                        .Select(game => game.GameData)
+                        .ToList();
 
-                    // ====================================================
-                    // DS4WINDOWS AUTO PROFILE
-                    // ====================================================
+                // Copie pour les opérations effectuées après
+                // le retour de GetGames().
+                selectedGamesForActions =
+                    selectedGames.ToList();
 
-                    if (selectedGames.Count > 0)
+                // ====================================================
+                // CONTRÔLEUR
+                // ====================================================
+
+                selectedController =
+                    window.SelectedController;
+
+                logger.Info(
+                    $"Selected controller: {selectedController}"
+                );
+
+                // ====================================================
+                // HDR
+                // ====================================================
+
+                enableHdr =
+                    window.EnableHdrSupport;
+
+                // ====================================================
+                // METADATA TRACKING
+                // ====================================================
+
+                if (selectedGames.Count > 0)
+                {
+                    pendingMetadataExecutablePath =
+                        selectedGames[0].ExecutablePath;
+
+                    logger.Info(
+                        $"Waiting for metadata for: {pendingMetadataExecutablePath}"
+                    );
+                }
+
+                // ====================================================
+                // HDR TRACKING
+                // ====================================================
+
+                if (enableHdr)
+                {
+                    pendingHdrExecutablePath =
+                        selectedGames[0].ExecutablePath;
+
+                    logger.Info(
+                        $"HDR requested for: {pendingHdrExecutablePath}"
+                    );
+                }
+
+                // ====================================================
+                // IGNORED GAMES
+                // ====================================================
+
+                var newlyIgnored =
+                    allFoundGames
+                        .Where(game => game.IsIgnored)
+                        .Select(game =>
+                            game.ExecutablePath)
+                        .ToList();
+
+                if (newlyIgnored.Count > 0)
+                {
+                    foreach (var path in newlyIgnored)
                     {
-                        string selectedController =
-                            window.SelectedController;
-
-                        if (!string.IsNullOrWhiteSpace(
-                            selectedController))
+                        if (!settings.BlockedPathsUI
+                            .Contains(path))
                         {
-                            UpdateDS4WindowsProfiles(
-                                selectedGames,
-                                selectedController
-                            );
-                        }
-                        else
-                        {
-                            logger.Info(
-                                "No controller selected. DS4Windows profile was not modified."
-                            );
+                            settings.BlockedPathsUI
+                                .Add(path);
                         }
                     }
 
-                    // ====================================================
-                    // METADATA TRACKING
-                    // ====================================================
-
-                    if (selectedGames.Count > 0)
-                    {
-                        pendingMetadataExecutablePath =
-                            selectedGames[0].ExecutablePath;
-
-                        logger.Info(
-                            $"Waiting for metadata for: {pendingMetadataExecutablePath}"
-                        );
-                    }
-
-                    // ====================================================
-                    // HDR
-                    // ====================================================
-
-                    if (window.EnableHdrSupport &&
-                        selectedGames.Count > 0)
-                    {
-                        pendingHdrExecutablePath =
-                            selectedGames[0].ExecutablePath;
-
-                        logger.Info(
-                            $"HDR requested for: {pendingHdrExecutablePath}"
-                        );
-                    }
-
-                    // ====================================================
-                    // RESHADE DEPLOYER
-                    // ====================================================
-
-                    if (selectedGames.Count > 0)
-                    {
-                        LaunchReShadeDeployer(
-                            selectedGames[0].ExecutablePath
-                        );
-                    }
-
-                    // ====================================================
-                    // IGNORED GAMES
-                    // ====================================================
-
-                    var newlyIgnored =
-                        allFoundGames
-                            .Where(game => game.IsIgnored)
-                            .Select(game =>
-                                game.ExecutablePath)
-                            .ToList();
-
-                    if (newlyIgnored.Count > 0)
-                    {
-                        foreach (var path in newlyIgnored)
-                        {
-                            if (!settings.BlockedPathsUI
-                                .Contains(path))
-                            {
-                                settings.BlockedPathsUI
-                                    .Add(path);
-                            }
-                        }
-
-                        settings.EndEdit();
-                    }
+                    settings.EndEdit();
                 }
             });
+
+            // ========================================================
+            // IMPORTANT :
+            //
+            // finalSelection est maintenant déjà prêt.
+            // On laisse GetGames() retourner les jeux à Playnite
+            // sans attendre DS4Windows ou ReShade.
+            // ========================================================
+
+            if (selectedGamesForActions.Count > 0)
+            {
+                Application.Current.Dispatcher.BeginInvoke(
+                    new Action(() =>
+                    {
+                        try
+                        {
+                            // ====================================================
+                            // DS4WINDOWS
+                            // ====================================================
+
+                            if (!string.IsNullOrWhiteSpace(
+                                selectedController))
+                            {
+                                UpdateDS4WindowsProfiles(
+                                    selectedGamesForActions,
+                                    selectedController
+                                );
+                            }
+                            else
+                            {
+                                logger.Info(
+                                    "No controller selected. DS4Windows profile was not modified."
+                                );
+                            }
+
+                            // ====================================================
+                            // RESHADE DEPLOYER
+                            // ====================================================
+
+                            LaunchReShadeDeployer(
+                                selectedGamesForActions[0]
+                                    .ExecutablePath
+                            );
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.Error(
+                                ex,
+                                "Failed during deferred post-import actions."
+                            );
+                        }
+                    }),
+                    System.Windows.Threading.DispatcherPriority.Background
+                );
+            }
+
+            // ========================================================
+            // RETOUR IMMÉDIAT DES JEUX À PLAYNITE
+            // ========================================================
 
             return finalSelection;
         }
@@ -595,9 +667,9 @@ namespace AutoImportPlugin
                     return;
                 }
 
-                // --------------------------------------------------------
+                // ========================================================
                 // CONTROLLER MAPPING
-                // --------------------------------------------------------
+                // ========================================================
 
                 string controllerValue;
                 bool turnOff;
@@ -641,9 +713,9 @@ namespace AutoImportPlugin
                     $"Updating DS4Windows profiles: Controller1={controllerValue}, TurnOff={turnOff}"
                 );
 
-                // --------------------------------------------------------
+                // ========================================================
                 // LOAD XML
-                // --------------------------------------------------------
+                // ========================================================
 
                 XDocument document =
                     XDocument.Load(
@@ -666,9 +738,9 @@ namespace AutoImportPlugin
 
                 bool xmlChanged = false;
 
-                // --------------------------------------------------------
+                // ========================================================
                 // UPDATE EACH SELECTED GAME
-                // --------------------------------------------------------
+                // ========================================================
 
                 foreach (var selectedGame in selectedGames)
                 {
@@ -703,9 +775,9 @@ namespace AutoImportPlugin
 
                     if (existingProgram == null)
                     {
-                        // ------------------------------------------------
+                        // =================================================
                         // NEW PROGRAM ENTRY
-                        // ------------------------------------------------
+                        // =================================================
 
                         existingProgram =
                             new XElement(
@@ -768,9 +840,9 @@ namespace AutoImportPlugin
                     }
                     else
                     {
-                        // ------------------------------------------------
+                        // =================================================
                         // EXISTING PROGRAM ENTRY
-                        // ------------------------------------------------
+                        // =================================================
 
                         XElement controller1 =
                             existingProgram.Element(
@@ -791,6 +863,13 @@ namespace AutoImportPlugin
                             controller1.Value =
                                 controllerValue;
                         }
+
+                        // =================================================
+                        // TURN OFF
+                        //
+                        // OFF => True
+                        // PS4/XBOX => False
+                        // =================================================
 
                         XElement turnOffElement =
                             existingProgram.Element(
@@ -824,9 +903,9 @@ namespace AutoImportPlugin
                     xmlChanged = true;
                 }
 
-                // --------------------------------------------------------
+                // ========================================================
                 // SAVE XML
-                // --------------------------------------------------------
+                // ========================================================
 
                 if (!xmlChanged)
                 {
@@ -846,9 +925,9 @@ namespace AutoImportPlugin
                     $"Saved DS4Windows Auto Profiles: {AutoProfilesPath}"
                 );
 
-                // --------------------------------------------------------
+                // ========================================================
                 // RESTART DS4WINDOWS
-                // --------------------------------------------------------
+                // ========================================================
 
                 RestartDS4Windows();
             }
@@ -873,9 +952,9 @@ namespace AutoImportPlugin
                     "Stopping DS4Windows..."
                 );
 
-                // --------------------------------------------------------
+                // ========================================================
                 // KILL DS4WINDOWS + CHILD PROCESSES
-                // --------------------------------------------------------
+                // ========================================================
 
                 var killInfo =
                     new ProcessStartInfo
@@ -929,9 +1008,9 @@ namespace AutoImportPlugin
                     }
                 }
 
-                // --------------------------------------------------------
-                // ATTEND QUE DS4WINDOWS SOIT VRAIMENT FERMÉ
-                // --------------------------------------------------------
+                // ========================================================
+                // ATTENDRE QUE DS4WINDOWS SOIT VRAIMENT FERMÉ
+                // ========================================================
 
                 bool stillRunning = true;
 
@@ -956,9 +1035,9 @@ namespace AutoImportPlugin
                     System.Threading.Thread.Sleep(250);
                 }
 
-                // --------------------------------------------------------
+                // ========================================================
                 // VÉRIFICATION FINALE
-                // --------------------------------------------------------
+                // ========================================================
 
                 var remainingProcesses =
                     Process.GetProcessesByName(
@@ -983,9 +1062,9 @@ namespace AutoImportPlugin
                     return;
                 }
 
-                // --------------------------------------------------------
+                // ========================================================
                 // VÉRIFICATION DE L'EXE
-                // --------------------------------------------------------
+                // ========================================================
 
                 if (!File.Exists(
                     DS4WindowsPath))
@@ -997,9 +1076,9 @@ namespace AutoImportPlugin
                     return;
                 }
 
-                // --------------------------------------------------------
+                // ========================================================
                 // RELANCE
-                // --------------------------------------------------------
+                // ========================================================
 
                 logger.Info(
                     "Starting DS4Windows..."
