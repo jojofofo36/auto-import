@@ -145,7 +145,7 @@ namespace AutoImportPlugin
                 // ========================================================
 
                 var processes =
-                    Process.GetProcessesByName("launcher");
+                    Process.GetProcessesByName("Project GLD");
 
                 if (processes.Length > 0)
                 {
