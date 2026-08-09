@@ -155,13 +155,38 @@
 
     <Grid Grid.Row="2" Margin="0,15,0,0">
 
-      <CheckBox x:Name="ChkEnableHdr"
-                Content="Enable HDR support"
-                IsChecked="False"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Center"
-                Foreground="#DDDDDD"
-                FontSize="13"/>
+      <StackPanel Orientation="Horizontal"
+                  HorizontalAlignment="Left"
+                  VerticalAlignment="Center">
+
+        <CheckBox x:Name="ChkEnableHdr"
+                  Content="Enable HDR support"
+                  IsChecked="False"
+                  HorizontalAlignment="Left"
+                  VerticalAlignment="Center"
+                  Foreground="#DDDDDD"
+                  FontSize="13"
+                  Margin="0,0,20,0"/>
+
+        <TextBlock Text="Controller:"
+                   VerticalAlignment="Center"
+                   Foreground="#DDDDDD"
+                   FontSize="13"
+                   Margin="0,0,8,0"/>
+
+        <ComboBox x:Name="CmbController"
+                  Width="100"
+                  Height="26"
+                  SelectedIndex="0"
+                  VerticalContentAlignment="Center">
+
+          <ComboBoxItem Content="PS4"/>
+          <ComboBoxItem Content="XBOX"/>
+          <ComboBoxItem Content="OFF"/>
+
+        </ComboBox>
+
+      </StackPanel>
 
       <StackPanel Orientation="Horizontal"
                   HorizontalAlignment="Right">
