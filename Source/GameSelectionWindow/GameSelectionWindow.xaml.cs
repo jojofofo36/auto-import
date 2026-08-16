@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace AutoImportPlugin
 {
@@ -23,6 +24,36 @@ namespace AutoImportPlugin
         }
 
         // ============================================================
+        // HDR
+        // ============================================================
+
+        public bool EnableHdrSupport
+        {
+            get
+            {
+                return ChkEnableHdr.IsChecked == true;
+            }
+        }
+
+        // ============================================================
+        // CONTROLLER
+        // ============================================================
+
+        public string SelectedController
+        {
+            get
+            {
+                if (CmbController.SelectedItem
+                    is ComboBoxItem item)
+                {
+                    return item.Content?.ToString() ?? "OFF";
+                }
+
+                return "OFF";
+            }
+        }
+
+        // ============================================================
         // CONSTRUCTOR
         // ============================================================
 
@@ -34,6 +65,9 @@ namespace AutoImportPlugin
             _games = foundGames;
 
             GridGames.ItemsSource = _games;
+
+            // PS4 par défaut
+            CmbController.SelectedIndex = 0;
         }
 
         // ============================================================
@@ -67,7 +101,7 @@ namespace AutoImportPlugin
             }
 
             // ========================================================
-            // AU MOINS UN IMPORT OU UN IGNORE
+            // AU MOINS UN JEU À IMPORTER OU À IGNORER
             // ========================================================
 
             DialogResult = true;
