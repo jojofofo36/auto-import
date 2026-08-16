@@ -821,17 +821,102 @@ namespace AutoImportPlugin
                     if (window.ShowDialog() != true)
                         return;
 
-                    var selectedGames =
-                        window.SelectedGames;
+                    // =================================================
+                    // RECUPERATION DES CHOIX
+                    // =================================================
 
-                    if (selectedGames == null ||
-                        selectedGames.Count == 0)
+                    var selectedGames =
+                        window.SelectedGames
+                        ?? new List<ScannedGameWrapper>();
+
+                    var newlyIgnored =
+                        allFoundGames
+                            .Where(
+                                game =>
+                                    game.IsIgnored
+                            )
+                            .Select(
+                                game =>
+                                    game.ExecutablePath
+                            )
+                            .Where(
+                                path =>
+                                    !string.IsNullOrWhiteSpace(path)
+                            )
+                            .ToList();
+
+                    // =================================================
+                    // IGNORED GAMES
+                    // =================================================
+                    //
+                    // IMPORTANT :
+                    //
+                    // Ce bloc doit être exécuté AVANT le test
+                    // selectedGames.Count == 0.
+                    //
+                    // Ainsi, il est possible de sélectionner
+                    // uniquement des jeux à ignorer sans avoir
+                    // besoin d'importer au moins un jeu.
+                    //
+
+                    if (newlyIgnored.Count > 0)
                     {
+                        foreach (var path
+                            in newlyIgnored)
+                        {
+                            if (!settings.BlockedPathsUI
+                                .Contains(path))
+                            {
+                                settings.BlockedPathsUI
+                                    .Add(path);
+
+                                logger.Info(
+                                    $"Added game to blocked paths: {path}"
+                                );
+                            }
+                        }
+
+                        settings.EndEdit();
+
+                        logger.Info(
+                            $"Added {newlyIgnored.Count} game(s) to ignored paths."
+                        );
+                    }
+
+                    // =================================================
+                    // AUCUN JEU À IMPORTER
+                    // =================================================
+                    //
+                    // Si l'utilisateur a uniquement coché Ignore,
+                    // on accepte le bouton Import Selected.
+                    //
+                    // On ne déclenche donc PAS de message demandant
+                    // de sélectionner au moins un jeu.
+                    //
+
+                    if (selectedGames.Count == 0)
+                    {
+                        if (newlyIgnored.Count > 0)
+                        {
+                            logger.Info(
+                                "No games selected for import. Ignored games were saved successfully."
+                            );
+                        }
+                        else
+                        {
+                            logger.Info(
+                                "No games selected for import and no games ignored."
+                            );
+                        }
+
+                        finalSelection =
+                            new List<GameMetadata>();
+
                         return;
                     }
 
                     // =================================================
-                    // POST IMPORT QUEUE
+                    // OPTIONS POST IMPORT
                     // =================================================
 
                     string selectedController =
@@ -917,38 +1002,6 @@ namespace AutoImportPlugin
                     }
 
                     // =================================================
-                    // IGNORED GAMES
-                    // =================================================
-
-                    var newlyIgnored =
-                        allFoundGames
-                            .Where(
-                                game =>
-                                    game.IsIgnored
-                            )
-                            .Select(
-                                game =>
-                                    game.ExecutablePath
-                            )
-                            .ToList();
-
-                    if (newlyIgnored.Count > 0)
-                    {
-                        foreach (var path
-                            in newlyIgnored)
-                        {
-                            if (!settings.BlockedPathsUI
-                                .Contains(path))
-                            {
-                                settings.BlockedPathsUI
-                                    .Add(path);
-                            }
-                        }
-
-                        settings.EndEdit();
-                    }
-
-                    // =================================================
                     // RETOUR À PLAYNITE
                     // =================================================
 
@@ -957,6 +1010,10 @@ namespace AutoImportPlugin
                             .Select(
                                 game =>
                                     game.GameData
+                            )
+                            .Where(
+                                game =>
+                                    game != null
                             )
                             .ToList();
 
