@@ -1,88 +1,63 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
-using System.Windows.Controls;
 
 namespace AutoImportPlugin
 {
     public partial class GameSelectionWindow : Window
     {
-        private readonly List<ScannedGameWrapper> _games;
+        private List<ScannedGameWrapper> _games;
+
+        // ============================================================
+        // SELECTED GAMES
+        // ============================================================
 
         public List<ScannedGameWrapper> SelectedGames
         {
             get
             {
                 return _games
-                    .Where(x => x != null && x.IsSelected)
+                    .Where(game => game.IsSelected)
                     .ToList();
             }
         }
 
-        public bool EnableHdrSupport
-        {
-            get
-            {
-                return ChkEnableHdr.IsChecked == true;
-            }
-        }
-
-        public string SelectedController
-        {
-            get
-            {
-                if (CmbController.SelectedItem
-                    is ComboBoxItem item)
-                {
-                    return item.Content?.ToString() ?? "OFF";
-                }
-
-                return "OFF";
-            }
-        }
+        // ============================================================
+        // CONSTRUCTOR
+        // ============================================================
 
         public GameSelectionWindow(
             List<ScannedGameWrapper> foundGames)
         {
             InitializeComponent();
 
-            _games =
-                foundGames ??
-                new List<ScannedGameWrapper>();
+            _games = foundGames;
 
             GridGames.ItemsSource = _games;
-
-            CmbController.SelectedIndex = 0;
         }
+
+        // ============================================================
+        // IMPORT
+        // ============================================================
 
         private void BtnImport_Click(
             object sender,
             RoutedEventArgs e)
         {
-            /*
-             * On force le DataGrid à terminer l'édition éventuelle
-             * avant de lire IsSelected.
-             */
+            bool hasSelectedGames =
+                _games.Any(game => game.IsSelected);
 
-            GridGames.CommitEdit(
-                DataGridEditingUnit.Cell,
-                true
-            );
+            bool hasIgnoredGames =
+                _games.Any(game => game.IsIgnored);
 
-            GridGames.CommitEdit(
-                DataGridEditingUnit.Row,
-                true
-            );
+            // ========================================================
+            // RIEN N'A ÉTÉ SÉLECTIONNÉ
+            // ========================================================
 
-            var selected =
-                _games
-                    .Where(x => x != null && x.IsSelected)
-                    .ToList();
-
-            if (selected.Count == 0)
+            if (!hasSelectedGames && !hasIgnoredGames)
             {
                 MessageBox.Show(
-                    "Please select at least one game to import.",
+                    "Please select at least one game to import or ignore.",
                     "AutoImport",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information
@@ -91,14 +66,24 @@ namespace AutoImportPlugin
                 return;
             }
 
+            // ========================================================
+            // AU MOINS UN IMPORT OU UN IGNORE
+            // ========================================================
+
             DialogResult = true;
+            Close();
         }
+
+        // ============================================================
+        // CANCEL
+        // ============================================================
 
         private void BtnCancel_Click(
             object sender,
             RoutedEventArgs e)
         {
             DialogResult = false;
+            Close();
         }
     }
 }
